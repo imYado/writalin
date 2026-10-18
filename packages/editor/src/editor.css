@@ -80,3 +80,29 @@
 .cm-panel.cm-search input { border: 0; background: var(--w-soft); border-radius: 999px; padding: 4px 10px; }
 .cm-panel.cm-search button { border: 0; background: var(--w-soft); border-radius: 999px; padding: 4px 10px; background-image: none; }
 .cm-searchMatch { background: var(--w-highlight); border-radius: 3px; }
+
+/* Tables: real tables with editable cells; the toolbar shows while you're in one. */
+.w-editor .cm-table { position: relative; margin: 0 0 14px; padding-top: 34px; break-inside: avoid; }
+.w-editor .cm-table table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.94em; border-radius: 14px; overflow: hidden; background: var(--w-surface); box-shadow: 0 1px 3px rgb(0 0 0 / 0.06), 0 0 0 1px var(--w-soft); }
+.w-editor .cm-table th, .w-editor .cm-table td { padding: 0; text-align: left; vertical-align: top; }
+.w-editor .cm-table th { background: var(--w-soft); }
+.w-editor .cm-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--w-text) 2.5%, transparent); }
+.w-editor .cm-table tr + tr td, .w-editor .cm-table tbody tr:first-child td { box-shadow: inset 0 1px 0 var(--w-soft); }
+.w-editor .cm-table td + td, .w-editor .cm-table th + th { box-shadow: inset 1px 0 0 var(--w-soft); }
+.w-editor .cm-table tr + tr td + td, .w-editor .cm-table tbody tr:first-child td + td { box-shadow: inset 1px 1px 0 var(--w-soft); }
+.w-editor .cm-table input {
+  width: 100%; min-width: 4em; border: 0; background: transparent; color: inherit; font: inherit; line-height: 1.5;
+  padding: 8px 12px; outline: none; border-radius: 0; transition: background-color var(--w-anim);
+}
+.w-editor .cm-table th input { font-weight: 650; color: var(--w-heading); }
+.w-editor .cm-table input:hover { background: var(--w-soft); }
+.w-editor .cm-table input:focus { background: var(--w-accent-soft); box-shadow: none; }
+.w-editor .cm-table-bar {
+  position: absolute; right: 0; top: 0; z-index: 2; display: flex; gap: 2px; padding: 3px; border-radius: 999px;
+  background: var(--w-surface); box-shadow: var(--w-shadow); opacity: 0; pointer-events: none; transform: translateY(4px);
+  transition: opacity var(--w-anim), transform var(--w-anim) var(--w-ease); font-family: var(--w-font);
+}
+.w-editor .cm-table:hover .cm-table-bar, .w-editor .cm-table-active .cm-table-bar { opacity: 1; pointer-events: auto; transform: none; }
+.w-editor .cm-table-bar button { border: 0; background: transparent; color: var(--w-text-muted); font-size: 12px; padding: 4px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+.w-editor .cm-table-bar button:hover { background: var(--w-soft); color: var(--w-text); }
+.w-editor .cm-table-source { font-family: var(--w-font-mono); font-size: 0.86em; }

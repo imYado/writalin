@@ -13,6 +13,7 @@ import { focusCompartment, focusModeExtension } from "./focusMode";
 import { toggleWrap } from "./commands";
 import { editorHost, type EditorHost } from "./host";
 import { printLayout, printCompartment } from "./printLayout";
+import { tables } from "./tables";
 
 const highlight = HighlightStyle.define([
   { tag: t.heading, color: "var(--w-heading)", fontWeight: "650" },
@@ -67,6 +68,7 @@ export function writalinExtensions(o: WritalinEditorOptions): Extension[] {
     markdown({ base: markdownLanguage, addKeymap: true }),
     syntaxHighlighting(highlight),
     livePreview,
+    tables,
     linkClicks,
     writalinCompletions,
     headingFolding,
