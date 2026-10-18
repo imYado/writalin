@@ -114,3 +114,17 @@ describe("Vault", () => {
     expect(await target.readText("A.md")).toBe("# A");
   });
 });
+
+describe("writeBody", () => {
+  it("keeps frontmatter changed elsewhere in the app and bumps updated", async () => {
+    const { vault } = await makeVault({ "N.md": "---\ncreated: 2026-01-01T00:00\n---\nold" });
+    const { mtime } = await vault.read("N.md");
+    await vault.addSource("N.md", "https://x.y");
+    await vault.writeBody("N.md", "new body", { expectedMtime: mtime });
+    const s = splitFrontmatter((await vault.read("N.md")).text);
+    expect(s.body).toBe("new body");
+    expect(s.frontmatter.sources).toEqual(["https://x.y"]);
+    expect(s.frontmatter.created).toBe("2026-01-01T00:00");
+    expect(s.frontmatter.updated).toMatch(/^\d{4}-/);
+  });
+});

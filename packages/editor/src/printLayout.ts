@@ -104,7 +104,10 @@ const measurer = ViewPlugin.fromClass(
           const key = breaks.map((b) => `${b.pos}:${b.page}`).join(",");
           if (key !== this.last) {
             this.last = key;
-            view.dispatch({ effects: setBreaks.of(breaks) });
+            // Can't dispatch inside a measure cycle; apply right after it.
+            queueMicrotask(() => {
+              if (this.last === key) view.dispatch({ effects: setBreaks.of(breaks) });
+            });
           }
         },
       });

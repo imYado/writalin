@@ -206,6 +206,18 @@ export class Vault {
     return stat;
   }
 
+  /**
+   * Save just the body of a note (what the editor shows), keeping whatever
+   * frontmatter is on disk now. Updates `updated`. Conflicts as in `write`.
+   */
+  async writeBody(path: VaultPath, body: string, opts: { expectedMtime?: number } = {}): Promise<FileStat> {
+    path = normalizePath(path);
+    const disk = this.files.has(path) ? await this.store.readText(path).catch(() => "") : "";
+    const { yaml } = splitFrontmatter(disk);
+    const text = yaml != null ? `---\n${yaml}\n---\n${body}` : body;
+    return this.write(path, text, { ...opts, touch: true });
+  }
+
   async writeBinary(path: VaultPath, data: Blob): Promise<VaultPath> {
     path = this.uniquePath(normalizePath(path));
     const stat = await this.store.write(path, data);

@@ -1,0 +1,74 @@
+/* Left-pane workspaces */
+.ws { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--w-panel-text); background: var(--w-panel); position: relative; }
+.ws-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--w-border); flex-wrap: wrap; }
+.ws-toolbar .w-input { padding: 5px 8px; font-size: 13px; }
+.ws-title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-scroll { flex: 1; overflow: auto; min-height: 0; }
+.ws-empty { padding: 24px; text-align: center; }
+.ws-loading { padding: 24px; color: var(--w-text-muted); }
+.ws-check { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.ws-floating { position: absolute; top: 8px; right: 12px; z-index: 5; }
+.ws-note .w-editor .cm-scroller, .ws-scratch .w-editor .cm-scroller { padding-top: 20px; }
+.ws-scratch .w-editor .cm-content, .ws-note .w-editor .cm-content { max-width: 100%; padding: 0 24px; }
+.pick-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.pick-list button { width: 100%; text-align: left; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+.pick-list button:hover, .pick-list button:focus-visible { background: var(--w-selection); }
+
+/* Tasks */
+.ws-quick-add { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--w-border); }
+.ws-quick-add .w-input:first-child { flex: 1; }
+.task-group { padding: 10px 12px 4px; }
+.task-group h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--w-text-muted); font-weight: 600; }
+.task-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.task-card { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--w-radius); background: var(--w-surface); border: 1px solid var(--w-border); transition: opacity var(--w-anim); }
+.task-card input { margin-top: 3px; width: 17px; height: 17px; accent-color: var(--w-accent); cursor: pointer; }
+.task-card.done { opacity: 0.6; }
+.task-card.done .task-text { text-decoration: line-through; }
+.task-body { flex: 1; min-width: 0; }
+.task-text { color: var(--w-text); overflow-wrap: anywhere; }
+.task-meta { display: flex; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--w-text-muted); margin-top: 4px; align-items: center; }
+.task-late { color: var(--w-danger); }
+.task-tag { color: var(--w-tag); }
+.task-source { border: 0; background: none; padding: 0; color: var(--w-link); cursor: pointer; font-size: 12.5px; }
+
+/* Calendar */
+.cal-title { margin: 0 8px; font-size: 15px; flex: 1; }
+.cal-grid { flex: 1; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); overflow: auto; min-height: 0; }
+.cal-month { grid-template-rows: auto repeat(6, minmax(88px, 1fr)); }
+.cal-week { grid-template-rows: auto 1fr; }
+.cal-day-view, .cal-grid.cal-day { grid-template-columns: 1fr; }
+.cal-dow { padding: 6px 8px; font-size: 11.5px; color: var(--w-text-muted); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--w-border); }
+.cal-day { border-right: 1px solid var(--w-border); border-bottom: 1px solid var(--w-border); padding: 4px 6px; min-width: 0; display: flex; flex-direction: column; }
+.cal-day.outside { opacity: 0.45; }
+.cal-day.today .cal-date { background: var(--w-accent); color: var(--w-accent-text); }
+.cal-day-head { display: flex; align-items: center; justify-content: space-between; }
+.cal-date { border: 0; background: none; font-size: 12.5px; width: 24px; height: 24px; border-radius: 50%; cursor: pointer; color: inherit; }
+.cal-add { border: 0; background: none; color: var(--w-text-muted); cursor: pointer; opacity: 0; font-size: 16px; }
+.cal-day:hover .cal-add, .cal-add:focus-visible { opacity: 1; }
+.cal-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.cal-items button { width: 100%; text-align: left; border: 0; border-radius: 4px; padding: 2px 5px; font-size: 12px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--w-text); }
+.cal-task button { background: color-mix(in srgb, var(--w-accent) 14%, transparent); }
+.cal-task.done button { text-decoration: line-through; opacity: 0.6; }
+.cal-note button { background: transparent; color: var(--w-text-muted); }
+.cal-note button::before { content: "▫ "; }
+.cal-time { font-variant-numeric: tabular-nums; margin-right: 4px; color: var(--w-text-muted); }
+.cal-more { color: var(--w-text-muted) !important; background: none !important; }
+.cal-grid.cal-day .cal-items button { font-size: 14px; padding: 6px 8px; white-space: normal; }
+
+/* PDF */
+.ws-pdf .pdf-page { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+.pdf-page-input { width: 56px; }
+.pdf-search { display: flex; gap: 6px; margin-left: auto; }
+.pdf-search .w-input { width: 140px; }
+.pdf-body { flex: 1; display: flex; min-height: 0; }
+.pdf-thumbs { width: 110px; overflow: auto; border-right: 1px solid var(--w-border); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.pdf-thumb { border: 2px solid transparent; background: none; border-radius: 4px; padding: 2px; cursor: pointer; display: flex; flex-direction: column; align-items: center; font-size: 11px; color: var(--w-text-muted); }
+.pdf-thumb.active { border-color: var(--w-accent); }
+.pdf-pages { position: relative; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 16px; background: var(--w-bg); }
+.pdf-page-box { position: relative; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / 0.15); flex: none; }
+.pdf-page-box canvas { display: block; }
+.pdf-quote-btn { position: absolute; transform: translateX(-50%); z-index: 10; box-shadow: var(--w-shadow); }
+
+/* Image */
+.ws-image-stage { padding: 16px; display: flex; justify-content: center; align-items: flex-start; background: var(--w-bg); }
+.ws-image-stage img { max-width: none; border-radius: 6px; }
