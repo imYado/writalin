@@ -10,7 +10,7 @@ export function Welcome({ canPickFolder, account, onPickFolder, onBrowserVault }
   return (
     <div className="welcome">
       <div className="welcome-card">
-        <img src="/icon.svg" alt="" width={48} height={48} />
+        <img src="/icons/icon128.png" className="app-logo" alt="" width={48} height={48} />
         <h1>Welcome to Writalin</h1>
         <p className="w-muted">Your notes live as plain Markdown files in a folder you choose. They open in Obsidian too, and nothing leaves your computer unless you turn on sync.</p>
         {canPickFolder ? (

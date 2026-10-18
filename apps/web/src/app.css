@@ -5,8 +5,10 @@
 
 /* Rail: the dedicated zones. */
 .rail { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 76px; padding: 14px 8px; }
-.rail-logo { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 10px; border: 0; border-radius: 16px; background: var(--w-surface); box-shadow: var(--w-shadow); cursor: pointer; transition: transform var(--w-anim) var(--w-ease); }
+.rail-logo { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 10px; padding: 0; overflow: hidden; border: 0; border-radius: 16px; background: transparent; box-shadow: var(--w-shadow); cursor: pointer; transition: transform var(--w-anim) var(--w-ease); }
 .rail-logo:hover { transform: rotate(-6deg) scale(1.04); }
+.rail-logo .app-logo { border-radius: inherit; }
+.app-logo { display: block; border-radius: 28%; object-fit: cover; }
 .rail-zones, .rail-bottom { display: flex; flex-direction: column; gap: 4px; width: 100%; }
 .rail-bottom { margin-top: auto; }
 .rail-item {

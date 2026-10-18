@@ -488,7 +488,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     <div className={`app${focusMode ? " focus-mode" : ""}`}>
       <nav className="rail" aria-label="Zones">
         <button className="rail-logo" onClick={() => goZone("home")} title={vault.name} aria-label="Home">
-          <img src="/icon.svg" alt="" width={24} height={24} />
+          <img src="/icons/icon128.png" className="app-logo" alt="" width={44} height={44} />
         </button>
         <div className="rail-zones">
           {ZONES.map((z, i) => (

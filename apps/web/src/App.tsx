@@ -100,7 +100,7 @@ export function App() {
 
   return (
     <>
-      {state.kind === "loading" && <div className="splash" aria-busy="true"><img src="/icon.svg" alt="Writalin" width={48} height={48} /></div>}
+      {state.kind === "loading" && <div className="splash" aria-busy="true"><img src="/icons/icon128.png" className="app-logo" alt="Writalin" width={48} height={48} /></div>}
       {state.kind === "none" && (
         <Welcome
           canPickFolder={supportsFolderAccess()}
