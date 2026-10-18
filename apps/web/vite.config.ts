@@ -63,7 +63,7 @@ export default defineConfig({
     devApi(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["icon.svg"],
+      includeAssets: ["icons/icon16.png", "icons/icon48.png", "icons/icon180.png"],
       manifest: {
         name: "Writalin",
         short_name: "Writalin",
@@ -73,12 +73,15 @@ export default defineConfig({
         display: "standalone",
         start_url: "/",
         icons: [
-          { src: "icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
-          { src: "icon-maskable.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
+          { src: "icons/icon48.png", sizes: "48x48", type: "image/png" },
+          { src: "icons/icon128.png", sizes: "128x128", type: "image/png" },
+          { src: "icons/icon192.png", sizes: "192x192", type: "image/png" },
+          { src: "icons/icon512.png", sizes: "512x512", type: "image/png" },
+          { src: "icons/icon-maskable512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
       },
       workbox: {
-        globPatterns: ["**/*.{js,css,html,svg,woff2,mjs}"],
+        globPatterns: ["**/*.{js,css,html,svg,png,woff2,mjs}"],
         navigateFallbackDenylist: [/^\/api\//],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
       },

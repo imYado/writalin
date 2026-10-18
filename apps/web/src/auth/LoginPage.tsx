@@ -76,7 +76,7 @@ export function LoginPage({ account, onDone, onSkip }: { account?: Account | nul
     <main className="login">
       <form className="login-card" onSubmit={submit} aria-describedby={error ? "login-error" : undefined}>
         <div className="login-brand">
-          <img src="/icon.svg" alt="" width={36} height={36} />
+          <img src="/icons/icon128.png" className="app-logo" alt="" width={36} height={36} />
           <span>Writalin</span>
         </div>
 
