@@ -7,3 +7,4 @@ export * from "./printLayout";
 export { clearEmbedCache, toggleCheckbox } from "./livePreview";
 export { writalinExtensions } from "./setup";
 export { headingFoldRange } from "./folding";
+export { parseTable, serializeTable, splitRow, type TableModel } from "./tables";
