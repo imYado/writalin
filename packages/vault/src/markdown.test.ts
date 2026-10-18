@@ -1,0 +1,146 @@
+import { describe, expect, it } from "vitest";
+import {
+  splitFrontmatter,
+  updateFrontmatter,
+  parseWikiLinks,
+  rewriteWikiLinks,
+  parseInlineTags,
+  parseTaskLine,
+  toggleTaskLine,
+  formatTaskLine,
+  parseFlashcards,
+  parseNote,
+  pdfQuote,
+  tagMatches,
+} from "./index";
+
+describe("frontmatter", () => {
+  it("splits and normalizes Obsidian-style frontmatter", () => {
+    const text = "---\ncreated: 2026-10-01T09:00\ntags: [history, '#essay']\nsources: https://a.b\n---\n# Hi\n";
+    const r = splitFrontmatter(text);
+    expect(r.frontmatter.tags).toEqual(["history", "essay"]);
+    expect(r.frontmatter.sources).toEqual(["https://a.b"]);
+    expect(r.body).toBe("# Hi\n");
+  });
+
+  it("accepts a comma separated tags string", () => {
+    expect(splitFrontmatter("---\ntags: a, b c\n---\n").frontmatter.tags).toEqual(["a", "b", "c"]);
+  });
+
+  it("keeps unknown keys, comments and body when updating", () => {
+    const text = "---\n# my comment\naliases: [x]\ncreated: 2026-10-01T09:00\n---\nBody [[link]]\n";
+    const out = updateFrontmatter(text, { updated: "2026-10-18T10:00" });
+    expect(out).toContain("# my comment");
+    expect(out).toContain("aliases: [ x ]");
+    expect(out).toContain("updated: 2026-10-18T10:00");
+    expect(out.endsWith("Body [[link]]\n")).toBe(true);
+    expect(splitFrontmatter(out).frontmatter.created).toBe("2026-10-01T09:00");
+  });
+
+  it("adds frontmatter to a note without it", () => {
+    const out = updateFrontmatter("Hello\n", { tags: ["a"] });
+    expect(out).toBe("---\ntags:\n  - a\n---\nHello\n");
+  });
+
+  it("round-trips a note with no changes byte for byte apart from the fence", () => {
+    const text = "---\ntitle: X\n---\n> [!note] Callout\n> body\n\n- [ ] task 📅 2026-10-20\n";
+    const out = updateFrontmatter(text, {});
+    expect(out).toBe(text);
+  });
+
+  it("leaves invalid YAML untouched", () => {
+    const text = "---\nfoo: [unclosed\n---\nbody";
+    expect(updateFrontmatter(text, { a: 1 })).toBe(text);
+  });
+});
+
+describe("wiki links", () => {
+  it("parses targets, headings, aliases and embeds", () => {
+    const links = parseWikiLinks("See [[Note A]], [[Note B#Part 2|part two]] and ![[attachments/d.svg]].");
+    expect(links.map((l) => [l.target, l.heading, l.alias, l.embed])).toEqual([
+      ["Note A", undefined, undefined, false],
+      ["Note B", "Part 2", "part two", false],
+      ["attachments/d.svg", undefined, undefined, true],
+    ]);
+  });
+
+  it("ignores links in code", () => {
+    expect(parseWikiLinks("`[[nope]]`\n```\n[[nope]]\n```\n[[yes]]").map((l) => l.target)).toEqual(["yes"]);
+  });
+
+  it("rewrites matching links and keeps heading and alias", () => {
+    const out = rewriteWikiLinks("[[Old]] [[Old#H|a]] [[Other]]", (t) => t === "Old", "New");
+    expect(out).toBe("[[New]] [[New#H|a]] [[Other]]");
+  });
+});
+
+describe("tags", () => {
+  it("finds inline tags but not headings, links or numbers", () => {
+    const tags = parseInlineTags("# Heading\nText #history and #school/term-1, not #123 or a#b or [[N#h]]\n`#code`");
+    expect(tags.map((t) => t.tag)).toEqual(["history", "school/term-1"]);
+  });
+
+  it("matches nested tags", () => {
+    expect(tagMatches("School/Term", "school")).toBe(true);
+    expect(tagMatches("schoolwork", "school")).toBe(false);
+  });
+});
+
+describe("tasks", () => {
+  it("parses Obsidian Tasks fields", () => {
+    const t = parseTaskLine("  - [ ] Essay due 📅 2026-10-20 ⏰ 9:00 ⏫ #history [[Essay notes]]", "a.md", 3)!;
+    expect(t).toMatchObject({
+      status: "todo",
+      due: "2026-10-20",
+      time: "09:00",
+      tags: ["history"],
+      links: ["Essay notes"],
+      line: 3,
+      indent: "  ",
+    });
+    expect(t.text).toBe("Essay due #history [[Essay notes]]");
+  });
+
+  it("toggles with a done date and back", () => {
+    const line = "- [ ] Read ch. 3 📅 2026-10-20";
+    const done = toggleTaskLine(line, "2026-10-18");
+    expect(done).toBe("- [x] Read ch. 3 📅 2026-10-20 ✅ 2026-10-18");
+    expect(toggleTaskLine(done)).toBe(line);
+  });
+
+  it("formats new task lines", () => {
+    expect(formatTaskLine({ text: "Revise", due: "2026-10-21", time: "18:30", tags: ["bio"], link: "Cells" })).toBe(
+      "- [ ] Revise 📅 2026-10-21 ⏰ 18:30 #bio [[Cells]]",
+    );
+  });
+});
+
+describe("flashcards", () => {
+  it("parses Q :: A lines but not tasks or dataview fields", () => {
+    const cards = parseFlashcards("What is ATP :: Energy currency\n- [ ] a :: b\nkey:: value\n- Capital of France :: Paris", "f.md");
+    expect(cards.map((c) => [c.question, c.answer])).toEqual([
+      ["What is ATP", "Energy currency"],
+      ["Capital of France", "Paris"],
+    ]);
+  });
+});
+
+describe("parseNote", () => {
+  it("collects metadata with correct line numbers after frontmatter", () => {
+    const text = "---\ntags: [bio]\n---\n# Cells\n- [ ] Learn mitosis #exam\n";
+    const meta = parseNote("Bio/Cells.md", text, { mtime: 1, size: text.length });
+    expect(meta.name).toBe("Cells");
+    expect(meta.tags).toEqual(["bio", "exam"]);
+    expect(meta.headings[0]).toMatchObject({ text: "Cells", line: 3 });
+    expect(meta.tasks[0]!.line).toBe(4);
+    expect(text.split("\n")[meta.tasks[0]!.line]).toBe(meta.tasks[0]!.raw);
+  });
+});
+
+describe("blocks", () => {
+  it("builds a PDF quote linking to the page", () => {
+    expect(pdfQuote("Line one\nLine two", "attachments/lecture 3.pdf", 4)).toBe(
+      "> Line one\n> Line two\n>\n> [source p.4](attachments/lecture%203.pdf#page=4)\n",
+    );
+  });
+});

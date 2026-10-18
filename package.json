@@ -1,0 +1,27 @@
+{
+  "name": "writalin",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Writalin: an ADHD-friendly, research-friendly, PDF-friendly notes app for students.",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "pnpm --filter @writalin/web dev",
+    "dev:extension": "pnpm --filter @writalin/extension dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "jsdom": "^26.1.0",
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
