@@ -4,9 +4,10 @@ import { WORKSPACE_PATH, SCRATCHPAD_PATH, importZip, type Vault, type VaultRecor
 import { basename, extname, isMarkdown, noteName, type VaultPath } from "@writalin/shared";
 import {
   ActionGrid, applyTheme, BottomBar, CommandPalette, findTheme, FocusTimer, Icon, toast, useFocusTimer,
-  type BarItem, type Command, type IconName, type Theme,
+  type BarItem, type Command, type GridAction, type IconName, type Theme,
 } from "@writalin/ui";
-import { CalendarWorkspace, ImageWorkspace, NoteWorkspace, ScratchpadWorkspace, TasksWorkspace, useVaultVersion, type WorkspaceProps } from "@writalin/workspaces";
+import { ActivityWorkspace, CalendarWorkspace, ImageWorkspace, NoteWorkspace, ScratchpadWorkspace, TasksWorkspace, useVaultVersion, type WorkspaceProps } from "@writalin/workspaces";
+import { AiPanel } from "./AiPanel";
 import { Home } from "./Home";
 import { NotePane, type NotePaneHandle } from "./NotePane";
 import { useNoteHost } from "./useNoteHost";
@@ -26,9 +27,19 @@ interface Tab {
   page?: number;
 }
 
+/** The zones in the left rail. "note" is the writing zone. */
+type Zone = "home" | "note" | "calendar" | "tasks" | "activity";
+const ZONES: { id: Zone; label: string; icon: IconName; hint: string }[] = [
+  { id: "home", label: "Home", icon: "home", hint: "Recent notes, search, today" },
+  { id: "note", label: "Write", icon: "pencil", hint: "Your current note" },
+  { id: "calendar", label: "Calendar", icon: "calendar", hint: "Reminders and notes by day" },
+  { id: "tasks", label: "Tasks", icon: "checkSquare", hint: "Every checklist in one place" },
+  { id: "activity", label: "Activity", icon: "activity", hint: "How much you've written" },
+];
+
 interface Layout {
   note: VaultPath | null;
-  view: "home" | "note";
+  view: Zone;
   tabs: Tab[];
   active: string | null;
   leftOpen: boolean;
@@ -61,7 +72,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const [focusMode, setFocusMode] = useState(false);
   const [printLayout, setPrintLayout] = useState(vault.settings.showPrintLayout);
   const [outlineOpen, setOutlineOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<false | true | "ai">(false);
+  const [dockOpen, setDockOpen] = useState<string | null>(null);
   const [themeEditor, setThemeEditor] = useState(false);
   const [customThemes, setCustomThemes] = useState<Theme[]>([]);
   const [jump, setJump] = useState<{ heading?: string; line?: number; nonce: number } | undefined>();
@@ -89,7 +101,11 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
 
   useEffect(() => {
     void vault.readJson<Layout>(WORKSPACE_PATH).then((l) => {
-      if (l) setLayout({ ...l, note: l.note && vault.files.has(l.note) ? l.note : null, view: l.note && vault.files.has(l.note) ? l.view : "home" });
+      if (l) {
+        const note = l.note && vault.files.has(l.note) ? l.note : null;
+        const view = ZONES.some((z) => z.id === l.view) && (l.view !== "note" || note) ? l.view : "home";
+        setLayout({ ...l, note, view });
+      }
       layoutLoaded.current = true;
     });
   }, [vault]);
@@ -168,6 +184,18 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     [vault, openPath],
   );
 
+  const goZone = useCallback(
+    (zone: Zone) => {
+      pane.current?.flush();
+      if (zone !== "note") return setLayout((l) => ({ ...l, view: zone }));
+      if (layout.note) return setLayout((l) => ({ ...l, view: "note" }));
+      const recent = [...vault.notes.values()].filter((n) => n.path !== SCRATCHPAD_PATH).sort((a, b) => b.mtime - a.mtime)[0];
+      if (recent) openPath(recent.path);
+      else void newNote();
+    },
+    [layout.note, vault, openPath, newNote],
+  );
+
   const insertIntoNote = useCallback(
     (markdown: string, opts: { source?: string } = {}) => {
       const ed = pane.current?.editor;
@@ -226,11 +254,14 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       } else if (e.altKey && e.key.toLowerCase() === "n") {
         e.preventDefault();
         void newNote();
+      } else if (e.altKey && !mod && /^[1-5]$/.test(e.key)) {
+        e.preventDefault();
+        goZone(ZONES[Number(e.key) - 1]!.id);
       } else if (e.key === "Escape" && focusMode) setFocusMode(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openTab, newNote, focusMode]);
+  }, [openTab, newNote, focusMode, goZone]);
 
   // ----- import -----
   const importFiles = async (files: FileList | File[], fromFolder = false) => {
@@ -264,79 +295,87 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   // ----- commands -----
   const commands = useMemo<Command[]>(() => {
     const list: Command[] = [
-      { id: "new-note", title: "New note", group: "Notes", shortcut: "Alt+N", run: () => void newNote() },
-      { id: "home", title: "Go home", group: "Navigate", run: () => setLayout((l) => ({ ...l, view: "home" })) },
-      { id: "focus", title: focusMode ? "Leave focus mode" : "Start focus mode", group: "Focus", shortcut: "Ctrl+.", run: () => setFocusMode((f) => !f) },
-      { id: "timer-start", title: "Start focus timer", group: "Focus", run: () => timer.dispatch({ type: "start" }) },
-      { id: "timer-pause", title: "Pause focus timer", group: "Focus", run: () => timer.dispatch({ type: "pause" }) },
-      { id: "timer-reset", title: "Stop focus timer", group: "Focus", run: () => timer.dispatch({ type: "reset" }) },
-      { id: "print", title: printLayout ? "Hide print layout" : "Show print layout", group: "View", run: () => setPrintLayout((p) => !p) },
-      { id: "outline", title: outlineOpen ? "Hide outline" : "Show outline", group: "View", shortcut: "Ctrl+Shift+O", run: () => setOutlineOpen((o) => !o) },
-      { id: "close-left", title: "Close left pane", group: "View", run: () => setLayout((l) => ({ ...l, leftOpen: false })) },
-      { id: "ws-tasks", title: "Open Tasks", group: "Workspaces", run: () => openTab({ kind: "tasks" }) },
-      { id: "ws-cal", title: "Open Calendar", group: "Workspaces", run: () => openTab({ kind: "calendar" }) },
-      { id: "ws-scratch", title: "Open Scratch pad", group: "Workspaces", shortcut: "Ctrl+/", run: () => openTab({ kind: "scratch" }) },
-      { id: "import", title: "Import files…", group: "Import / export", run: () => fileInput.current?.click() },
-      { id: "export-zip", title: "Export vault as .zip", group: "Import / export", run: () => void exportVaultZip(vault) },
-      { id: "settings", title: "Settings", group: "Settings", run: () => setSettingsOpen(true) },
-      { id: "theme-edit", title: "Customize theme…", group: "Settings", run: () => setThemeEditor(true) },
-      ...[...findThemes(customThemes)].map((t) => ({ id: `theme-${t.id}`, title: `Theme: ${t.name}`, group: "Settings", run: () => void vault.saveSettings({ theme: t.id }) })),
-      ...records.filter((r) => r.id !== record.id).map((r) => ({ id: `vault-${r.id}`, title: `Switch to vault: ${r.name}`, group: "Vaults", run: () => onSwitchVault(r) })),
+      { id: "new-note", title: "New note", description: "Start a blank note", icon: "plus", group: "Notes", shortcut: "Alt+N", run: () => void newNote() },
+      ...ZONES.map((z, i): Command => ({ id: `zone-${z.id}`, title: `Go to ${z.label}`, description: z.hint, icon: z.icon, group: "Go to", shortcut: `Alt+${i + 1}`, keywords: "zone open", run: () => goZone(z.id) })),
+      { id: "ws-scratch", title: "Scratch pad", description: "Park a stray thought without losing your place", icon: "scratch", group: "Go to", shortcut: "Ctrl+/", keywords: "inbox quick", run: () => openTab({ kind: "scratch" }) },
+      { id: "ws-tasks", title: "Tasks beside this note", description: "Open Tasks in the side pane", icon: "split", group: "Side pane", run: () => openTab({ kind: "tasks" }) },
+      { id: "ws-cal", title: "Calendar beside this note", description: "Open Calendar in the side pane", icon: "split", group: "Side pane", run: () => openTab({ kind: "calendar" }) },
+      { id: "close-left", title: "Close side pane", description: "Back to just the note", icon: "close", group: "Side pane", run: () => setLayout((l) => ({ ...l, leftOpen: false })) },
+      { id: "focus", title: focusMode ? "Leave focus mode" : "Focus mode", description: "Fade everything but the paragraph you're writing", icon: "focus", group: "Focus", shortcut: "Ctrl+.", run: () => setFocusMode((f) => !f) },
+      { id: "timer-start", title: "Start focus timer", description: `${settings.timerMinutes} minutes, then a ${settings.breakMinutes}-minute break`, icon: "play", group: "Focus", keywords: "pomodoro", run: () => timer.dispatch({ type: "start" }) },
+      { id: "timer-pause", title: "Pause focus timer", description: "Pick it up again whenever", icon: "pause", group: "Focus", run: () => timer.dispatch({ type: "pause" }) },
+      { id: "timer-reset", title: "Stop focus timer", description: "Reset to the start", icon: "reset", group: "Focus", run: () => timer.dispatch({ type: "reset" }) },
+      { id: "ai", title: "AI study helper", description: "Explain, summarize, flashcards, quiz, next steps", icon: "sparkle", group: "AI", keywords: "explain summarize flashcards quiz steps where was i", run: () => { goZone("note"); setTimeout(() => setDockOpen("ai"), 60); } },
+      { id: "print", title: printLayout ? "Hide page breaks" : "Show page breaks", description: "See where A4 pages end when printed", icon: "printer", group: "View", keywords: "print layout", run: () => setPrintLayout((p) => !p) },
+      { id: "outline", title: outlineOpen ? "Hide outline" : "Show outline", description: "Headings of this note, to jump around", icon: "list", group: "View", shortcut: "Ctrl+Shift+O", run: () => setOutlineOpen((o) => !o) },
+      { id: "import", title: "Import files", description: "Notes, PDFs, images or a .zip", icon: "import", group: "Import and export", run: () => fileInput.current?.click() },
+      { id: "import-folder", title: "Import a folder", description: "Bring in an Obsidian vault or any folder", icon: "folder", group: "Import and export", run: () => folderInput.current?.click() },
+      { id: "export-zip", title: "Export vault as .zip", description: "Every note and attachment, as plain files", icon: "export", group: "Import and export", run: () => void exportVaultZip(vault) },
+      { id: "settings", title: "Settings", description: "Theme, fonts, timer, AI, account", icon: "settings", group: "Settings", run: () => setSettingsOpen(true) },
+      { id: "settings-ai", title: "AI settings", description: "Built-in AI or your own API key", icon: "key", group: "Settings", keywords: "api key anthropic", run: () => setSettingsOpen("ai") },
+      { id: "theme-edit", title: "Customize theme", description: "Pick every color yourself", icon: "pencil", group: "Settings", run: () => setThemeEditor(true) },
+      ...[...findThemes(customThemes)].map((t): Command => ({ id: `theme-${t.id}`, title: `Theme: ${t.name}`, description: t.base === "dark" ? "Dark theme" : "Light theme", icon: "moon", group: "Settings", run: () => void vault.saveSettings({ theme: t.id }) })),
+      ...records.filter((r) => r.id !== record.id).map((r): Command => ({ id: `vault-${r.id}`, title: `Switch to ${r.name}`, description: r.kind === "browser" ? "Vault in this browser" : "Folder vault", icon: "folder", group: "Vaults", run: () => onSwitchVault(r) })),
     ];
     if (layout.note) {
       const p = layout.note;
       list.push(
-        { id: "export-pdf", title: "Export note as PDF", group: "Import / export", run: () => void exportNote(vault, p, "pdf") },
-        { id: "export-md", title: "Export note as Markdown", group: "Import / export", run: () => void exportNote(vault, p, "md") },
-        { id: "export-html", title: "Export note as HTML", group: "Import / export", run: () => void exportNote(vault, p, "html") },
+        { id: "export-pdf", title: "Export note as PDF", description: "A4, ready to print or hand in", icon: "printer", group: "Import and export", run: () => void exportNote(vault, p, "pdf") },
+        { id: "export-md", title: "Export note as Markdown", description: "The .md file as it is", icon: "file", group: "Import and export", run: () => void exportNote(vault, p, "md") },
+        { id: "export-html", title: "Export note as HTML", description: "A web page", icon: "file", group: "Import and export", run: () => void exportNote(vault, p, "html") },
       );
     }
     for (const f of vault.files.keys()) {
-      if (f.endsWith(".pdf")) list.push({ id: `pdf:${f}`, title: `Open PDF: ${basename(f)}`, group: "Files", run: () => openPath(f) });
+      if (f.endsWith(".pdf")) list.push({ id: `pdf:${f}`, title: basename(f), description: "PDF", icon: "pdf", group: "Files", run: () => openPath(f) });
     }
     for (const n of vault.notes.values()) {
-      list.push({ id: `note:${n.path}`, title: n.name, hint: n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : undefined, group: "Notes", keywords: n.tags.join(" "), run: () => openPath(n.path) });
+      list.push({ id: `note:${n.path}`, title: n.name, description: [n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : "", n.tags.map((t) => `#${t}`).join(" ")].filter(Boolean).join(" · ") || "Note", icon: "file", group: "Notes", keywords: n.tags.join(" "), run: () => openPath(n.path) });
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vault, version, focusMode, printLayout, outlineOpen, layout.note, customThemes, records, record.id]);
+  }, [vault, version, focusMode, printLayout, outlineOpen, layout.note, customThemes, records, record.id, goZone, settings]);
 
   // ----- dock -----
   const ed = () => pane.current?.editor;
+  const noNote = !layout.note || layout.view !== "note";
   const bar: BarItem[] = [
-    { id: "home", label: "Home", icon: "home", active: layout.view === "home", onClick: () => setLayout((l) => ({ ...l, view: l.view === "home" && l.note ? "note" : "home" })) },
     {
       id: "tools",
-      label: "Tools",
+      label: "Format",
       icon: "tools",
       panel: (close) => (
         <>
-          <h3>Format</h3>
+          <h3>Text</h3>
           <ActionGrid
             actions={[
-              { label: "Bold", hint: "Ctrl+B", onClick: () => ed()?.wrap("**") },
-              { label: "Italic", hint: "Ctrl+I", onClick: () => ed()?.wrap("_") },
-              { label: "Highlight", hint: "Ctrl+Shift+H", onClick: () => ed()?.wrap("==") },
-              { label: "Strikethrough", onClick: () => ed()?.wrap("~~") },
-              { label: "Code", hint: "Ctrl+E", onClick: () => ed()?.wrap("`") },
-              { label: "Heading 1", onClick: () => ed()?.prefix("# ") },
-              { label: "Heading 2", onClick: () => ed()?.prefix("## ") },
-              { label: "Heading 3", onClick: () => ed()?.prefix("### ") },
-              { label: "Bullet list", onClick: () => ed()?.prefix("- ") },
-              { label: "Numbered list", onClick: () => ed()?.prefix("1. ") },
-              { label: "Checklist", onClick: () => ed()?.prefix("- [ ] ") },
-              { label: "Quote", onClick: () => ed()?.prefix("> ") },
-            ]}
+              { label: "Bold", desc: "Make it stand out", hint: "Ctrl+B", onClick: () => ed()?.wrap("**") },
+              { label: "Italic", desc: "Slanted emphasis", hint: "Ctrl+I", onClick: () => ed()?.wrap("_") },
+              { label: "Highlight", desc: "Like a marker pen", hint: "Ctrl+Shift+H", onClick: () => ed()?.wrap("==") },
+              { label: "Strikethrough", desc: "Cross it out", onClick: () => ed()?.wrap("~~") },
+              { label: "Code", desc: "Monospaced text", hint: "Ctrl+E", onClick: () => ed()?.wrap("`") },
+            ].map((x) => ({ ...x, disabled: noNote }))}
           />
-          <h3 style={{ marginTop: 14 }}>View</h3>
+          <h3>Structure</h3>
           <ActionGrid
             actions={[
-              { label: focusMode ? "Leave focus mode" : "Focus mode", icon: "focus", hint: "Ctrl+.", onClick: () => { setFocusMode((f) => !f); close(); } },
-              { label: outlineOpen ? "Hide outline" : "Outline", icon: "list", onClick: () => { setOutlineOpen((o) => !o); close(); } },
-              { label: printLayout ? "Hide print layout" : "Print layout", icon: "printer", onClick: () => { setPrintLayout((p) => !p); close(); } },
-              { label: "Collapse all", onClick: () => ed()?.foldAll() },
-              { label: "Expand all", onClick: () => ed()?.unfoldAll() },
-              { label: "All commands", icon: "search", hint: "Ctrl+K", onClick: () => { close(); setPaletteOpen(true); } },
+              { label: "Heading 1", desc: "Big section title", onClick: () => ed()?.prefix("# ") },
+              { label: "Heading 2", desc: "Medium section title", onClick: () => ed()?.prefix("## ") },
+              { label: "Heading 3", desc: "Small section title", onClick: () => ed()?.prefix("### ") },
+              { label: "Bullet list", desc: "Points with dots", onClick: () => ed()?.prefix("- ") },
+              { label: "Numbered list", desc: "Steps in order", onClick: () => ed()?.prefix("1. ") },
+              { label: "Checklist", desc: "Boxes to tick off", onClick: () => ed()?.prefix("- [ ] ") },
+              { label: "Quote", desc: "Indented quotation", onClick: () => ed()?.prefix("> ") },
+            ].map((x) => ({ ...x, disabled: noNote }))}
+          />
+          <h3>View</h3>
+          <ActionGrid
+            actions={[
+              { label: focusMode ? "Leave focus mode" : "Focus mode", desc: "Fade all but this paragraph", icon: "focus", hint: "Ctrl+.", onClick: () => { setFocusMode((f) => !f); close(); } },
+              { label: outlineOpen ? "Hide outline" : "Outline", desc: "Jump between headings", icon: "list", onClick: () => { setOutlineOpen((o) => !o); close(); } },
+              { label: printLayout ? "Hide page breaks" : "Page breaks", desc: "Where A4 pages end", icon: "printer", onClick: () => { setPrintLayout((p) => !p); close(); } },
+              { label: "Collapse all", desc: "Fold every section", onClick: () => ed()?.foldAll(), disabled: noNote },
+              { label: "Expand all", desc: "Unfold every section", onClick: () => ed()?.unfoldAll(), disabled: noNote },
+              { label: "All commands", desc: "Search everything", icon: "search", hint: "Ctrl+K", onClick: () => { close(); setPaletteOpen(true); } },
             ]}
           />
         </>
@@ -347,10 +386,21 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       label: "AI",
       icon: "sparkle",
       panel: () => (
-        <div className="w-col">
-          <h3>Study helper</h3>
-          <p className="w-muted">Explain, summarize, flashcards, “Where was I?” and more are coming next. AI is always opt-in and only sees the text you choose.</p>
-        </div>
+        <AiPanel
+          vault={vault}
+          account={account}
+          getSource={(tool) => {
+            const e = ed();
+            if (!e || noNote) return null;
+            const sel = e.selection();
+            const doc = e.view?.state.doc.toString() ?? "";
+            if (tool === "whereWasI") return { text: doc.slice(Math.max(0, e.cursor() - 6000), e.cursor()), label: "the text before your cursor" };
+            if (sel.trim()) return { text: sel, label: `your selection (${sel.trim().split(/\s+/).length} words)` };
+            return { text: doc, label: `the whole note “${noteName(layout.note!)}”` };
+          }}
+          insert={(md) => ed()?.insert(md, { block: true })}
+          onOpenSettings={() => { setDockOpen(null); setSettingsOpen("ai"); }}
+        />
       ),
     },
     {
@@ -360,16 +410,16 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       panel: (close) => (
         <ActionGrid
           actions={[
-            { label: "Checklist", icon: "checkSquare", onClick: () => { ed()?.insert("- [ ] ", { block: true }); close(); } },
-            { label: "Table", onClick: () => { ed()?.insert("| Column 1 | Column 2 |\n| --- | --- |\n|  |  |", { block: true }); close(); } },
-            { label: "Callout", onClick: () => { ed()?.insert("> [!note] ", { block: true }); close(); } },
-            { label: "Flashcard", onClick: () => { ed()?.insert("Question :: Answer", { block: true }); close(); } },
-            { label: "Link to note", icon: "link", onClick: () => { ed()?.insert("[[]]", { cursorOffset: 2 }); close(); } },
-            { label: "Image", icon: "image", onClick: () => { insertImageInput.current?.click(); close(); } },
-            { label: "PDF quote", icon: "pdf", onClick: () => { hostAction.current("insert-pdf-quote"); close(); } },
-            { label: "Task with date", icon: "calendar", onClick: () => { ed()?.insert(`- [ ]  📅 ${new Date().toISOString().slice(0, 10)}`, { block: true, cursorOffset: 6 }); close(); } },
-            { label: "Divider", onClick: () => { ed()?.insert("---", { block: true }); close(); } },
-          ].map((a): { label: string; icon?: IconName; onClick: () => void; disabled: boolean } => ({ ...a, icon: a.icon as IconName | undefined, disabled: !layout.note }))}
+            { label: "Checklist", desc: "A box to tick off", icon: "checkSquare", onClick: () => { ed()?.insert("- [ ] ", { block: true }); close(); } },
+            { label: "Task with date", desc: "Shows in Calendar", icon: "calendar", onClick: () => { ed()?.insert(`- [ ]  📅 ${new Date().toISOString().slice(0, 10)}`, { block: true, cursorOffset: 6 }); close(); } },
+            { label: "Table", desc: "Rows and columns", icon: "activity", onClick: () => { ed()?.insert("| Column 1 | Column 2 |\n| --- | --- |\n|  |  |", { block: true }); close(); } },
+            { label: "Callout", desc: "Box for side info", icon: "bulb", onClick: () => { ed()?.insert("> [!note] ", { block: true }); close(); } },
+            { label: "Flashcard", desc: "Question :: Answer", icon: "copy", onClick: () => { ed()?.insert("Question :: Answer", { block: true }); close(); } },
+            { label: "Link to note", desc: "Connect two notes", icon: "link", onClick: () => { ed()?.insert("[[]]", { cursorOffset: 2 }); close(); } },
+            { label: "Image", desc: "From your computer", icon: "image", onClick: () => { insertImageInput.current?.click(); close(); } },
+            { label: "PDF quote", desc: "With a page link", icon: "pdf", onClick: () => { hostAction.current("insert-pdf-quote"); close(); } },
+            { label: "Divider", desc: "Horizontal line", icon: "chevronRight", onClick: () => { ed()?.insert("---", { block: true }); close(); } },
+          ].map((a): GridAction => ({ ...a, icon: a.icon as IconName, disabled: noNote }))}
         />
       ),
     },
@@ -380,8 +430,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       panel: (close) => (
         <ActionGrid
           actions={[
-            { label: "Files (notes, PDFs, images, .zip)", icon: "file", onClick: () => { fileInput.current?.click(); close(); } },
-            { label: "Folder or Obsidian vault", icon: "folder", onClick: () => { folderInput.current?.click(); close(); } },
+            { label: "Files", desc: "Notes, PDFs, images, .zip", icon: "file", onClick: () => { fileInput.current?.click(); close(); } },
+            { label: "A folder", desc: "Obsidian vault or any folder", icon: "folder", onClick: () => { folderInput.current?.click(); close(); } },
           ]}
         />
       ),
@@ -393,15 +443,14 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       panel: (close) => (
         <ActionGrid
           actions={[
-            { label: "Note as PDF", icon: "printer", disabled: !layout.note, onClick: () => { void exportNote(vault, layout.note!, "pdf"); close(); } },
-            { label: "Note as Markdown", icon: "file", disabled: !layout.note, onClick: () => { void exportNote(vault, layout.note!, "md"); close(); } },
-            { label: "Note as HTML", disabled: !layout.note, onClick: () => { void exportNote(vault, layout.note!, "html"); close(); } },
-            { label: "Whole vault (.zip)", icon: "folder", onClick: () => { void exportVaultZip(vault); close(); } },
+            { label: "Note as PDF", desc: "A4, ready to print", icon: "printer", disabled: !layout.note, onClick: () => { void exportNote(vault, layout.note!, "pdf"); close(); } },
+            { label: "Note as Markdown", desc: "The plain .md file", icon: "file", disabled: !layout.note, onClick: () => { void exportNote(vault, layout.note!, "md"); close(); } },
+            { label: "Note as HTML", desc: "A web page", icon: "file", disabled: !layout.note, onClick: () => { void exportNote(vault, layout.note!, "html"); close(); } },
+            { label: "Whole vault", desc: "Everything as a .zip", icon: "folder", onClick: () => { void exportVaultZip(vault); close(); } },
           ]}
         />
       ),
     },
-    { id: "settings", label: "Settings", icon: "settings", onClick: () => setSettingsOpen(true) },
   ];
 
   const wsProps: WorkspaceProps = {
@@ -432,109 +481,172 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   };
 
   const showLeft = layout.leftOpen && layout.tabs.length > 0 && layout.view === "note";
+  const zone = layout.view === "note" && !layout.note ? "home" : layout.view;
+  const zoneMeta = ZONES.find((z) => z.id === zone)!;
 
   return (
     <div className={`app${focusMode ? " focus-mode" : ""}`}>
-      <header className="topbar">
-        <div className="topbar-left">
-          <button className="w-btn w-btn-ghost topbar-vault" onClick={() => setLayout((l) => ({ ...l, view: "home" }))} title="Home">
-            <img src="/icon.svg" alt="" width={20} height={20} />
-            <span>{vault.name}</span>
+      <nav className="rail" aria-label="Zones">
+        <button className="rail-logo" onClick={() => goZone("home")} title={vault.name} aria-label="Home">
+          <img src="/icon.svg" alt="" width={24} height={24} />
+        </button>
+        <div className="rail-zones">
+          {ZONES.map((z, i) => (
+            <button
+              key={z.id}
+              className="rail-item w-glow"
+              aria-current={zone === z.id ? "page" : undefined}
+              onClick={() => goZone(z.id)}
+              title={`${z.label} (Alt+${i + 1})`}
+            >
+              <Icon name={z.icon} size={20} />
+              <span>{z.label}</span>
+            </button>
+          ))}
+          <button className="rail-item w-glow" onClick={() => { if (zone !== "note") goZone("note"); openTab({ kind: "scratch" }); }} title="Scratch pad (Ctrl+/)">
+            <Icon name="scratch" size={20} />
+            <span>Scratch</span>
           </button>
-          {layout.view === "note" && layout.note && <span className="topbar-crumb w-muted">/ {noteName(layout.note)}</span>}
         </div>
-        <FocusTimer timer={timer} onDurationChange={(m) => void vault.saveSettings({ timerMinutes: m })} />
-        <div className="topbar-right">
-          {syncing !== "off" && (
-            <span className={`sync-dot sync-${syncing}`} title={syncing === "busy" ? "Syncing…" : syncing === "error" ? "Sync paused. Will retry." : "Synced"}>
-              <Icon name="cloud" size={16} />
-            </span>
-          )}
-          {layout.view === "note" && (
-            <>
-              <button className="w-icon-btn" aria-pressed={layout.leftOpen} onClick={() => (layout.tabs.length ? setLayout((l) => ({ ...l, leftOpen: !l.leftOpen })) : openTab({ kind: "tasks" }))} aria-label="Toggle left pane" title="Split view">
-                <Icon name="split" />
-              </button>
-              <button className="w-icon-btn" aria-pressed={outlineOpen} onClick={() => setOutlineOpen((o) => !o)} aria-label="Toggle outline" title="Outline (Ctrl+Shift+O)">
-                <Icon name="list" />
-              </button>
-            </>
-          )}
-          <button className="w-icon-btn" onClick={() => setPaletteOpen(true)} aria-label="Command palette" title="Commands (Ctrl+K)">
-            <Icon name="search" />
+        <div className="rail-bottom">
+          <button className="rail-item w-glow" onClick={() => setPaletteOpen(true)} title="Commands (Ctrl+K)">
+            <Icon name="search" size={20} />
+            <span>Search</span>
+          </button>
+          <button className="rail-item w-glow" onClick={() => setSettingsOpen(true)} title="Settings">
+            <Icon name="settings" size={20} />
+            <span>Settings</span>
           </button>
           {account ? (
-            <button className="w-icon-btn" onClick={() => setSettingsOpen(true)} aria-label={`Account: ${account.email}`} title={account.email}>
-              <Icon name="user" />
+            <button className="rail-item rail-avatar w-glow" onClick={() => setSettingsOpen(true)} title={account.email} aria-label={`Account: ${account.email}`}>
+              <span className="avatar">{account.email[0]!.toUpperCase()}</span>
             </button>
           ) : (
-            account === null && <a className="w-btn w-btn-small" href="/login">Sign in</a>
+            account === null && (
+              <a className="rail-item w-glow" href="/login" title="Sign in">
+                <Icon name="user" size={20} />
+                <span>Sign in</span>
+              </a>
+            )
           )}
         </div>
-      </header>
+      </nav>
 
-      <main className="main">
-        {layout.view === "home" || !layout.note ? (
-          <Home
-            vault={vault}
-            version={version}
-            records={records}
-            currentId={record.id}
-            onSwitchVault={onSwitchVault}
-            onOpen={(p, o) => openPath(p, o)}
-            onNewNote={(folder) => void newNote({ folder })}
-            initialTag={homeTag}
-            key={homeTag ?? ""}
-          />
-        ) : (
-          <div className={`split${showLeft ? " split-open" : ""}`}>
-            {showLeft && (
-              <section className="left-pane" aria-label="Workspace">
-                <div className="tabs" role="tablist">
-                  {layout.tabs.map((t) => (
-                    <div key={t.id} className={`tab${t.id === activeTab?.id ? " active" : ""}`} role="presentation">
-                      <button role="tab" aria-selected={t.id === activeTab?.id} onClick={() => setLayout((l) => ({ ...l, active: t.id }))}>
-                        <Icon name={TAB_META[t.kind].icon} size={14} />
-                        <span>{t.path ? noteName(t.path) : TAB_META[t.kind].label}</span>
-                      </button>
-                      <button
-                        className="tab-close"
-                        aria-label={`Close ${t.path ? basename(t.path) : TAB_META[t.kind].label}`}
-                        onClick={() => setLayout((l) => {
-                          const tabs = l.tabs.filter((x) => x.id !== t.id);
-                          return { ...l, tabs, active: tabs[tabs.length - 1]?.id ?? null, leftOpen: tabs.length > 0 && l.leftOpen };
-                        })}
-                      >
-                        <Icon name="close" size={12} />
-                      </button>
-                    </div>
-                  ))}
-                  <TabAdder onAdd={(kind) => openTab({ kind })} />
-                </div>
-                <div className="tab-body">{activeTab && renderTab(activeTab)}</div>
-              </section>
+      <div className="stage">
+        <header className="topbar">
+          <div className="topbar-left">
+            {zone === "note" && layout.note ? (
+              <>
+                <span className="topbar-zone w-muted">{vault.name}</span>
+                <span className="topbar-crumb">{noteName(layout.note)}</span>
+              </>
+            ) : (
+              <span className="topbar-zone">{zoneMeta.label}</span>
             )}
-            <section className="right-pane" aria-label="Note">
-              <NotePane
-                ref={pane}
-                vault={vault}
-                path={layout.note}
-                host={host}
-                version={version}
-                focusMode={focusMode}
-                printLayout={printLayout}
-                outlineOpen={outlineOpen}
-                jump={jump}
-                onRenamed={(to) => setLayout((l) => ({ ...l, note: to }))}
-                onOpen={(p) => openPath(p)}
-                onTag={(t) => { setHomeTag(t); setLayout((l) => ({ ...l, view: "home" })); }}
-              />
-            </section>
           </div>
-        )}
-      </main>
+          <FocusTimer timer={timer} onDurationChange={(m) => void vault.saveSettings({ timerMinutes: m })} />
+          <div className="topbar-right">
+            {syncing !== "off" && (
+              <span className={`sync-dot sync-${syncing}`} title={syncing === "busy" ? "Syncing…" : syncing === "error" ? "Sync paused. Will retry." : "Synced"}>
+                <Icon name="cloud" size={16} />
+              </span>
+            )}
+            {zone === "note" && (
+              <>
+                <button className="w-icon-btn" aria-pressed={showLeft} onClick={() => (layout.tabs.length ? setLayout((l) => ({ ...l, leftOpen: !l.leftOpen })) : openTab({ kind: "tasks" }))} aria-label="Side pane" title="Side pane">
+                  <Icon name="split" />
+                </button>
+                <button className="w-icon-btn" aria-pressed={outlineOpen} onClick={() => setOutlineOpen((o) => !o)} aria-label="Outline" title="Outline (Ctrl+Shift+O)">
+                  <Icon name="list" />
+                </button>
+              </>
+            )}
+            <button className="topbar-search w-glow" onClick={() => setPaletteOpen(true)} aria-label="Search and commands">
+              <Icon name="search" size={15} />
+              <span>Search or run a command</span>
+              <kbd>Ctrl K</kbd>
+            </button>
+          </div>
+        </header>
 
-      <BottomBar items={bar} />
+        <main className="main" key={zone}>
+          {zone === "home" && (
+            <Home
+              vault={vault}
+              version={version}
+              records={records}
+              currentId={record.id}
+              onSwitchVault={onSwitchVault}
+              onOpen={(p, o) => openPath(p, o)}
+              onNewNote={(folder) => void newNote({ folder })}
+              onZone={goZone}
+              initialTag={homeTag}
+              key={homeTag ?? ""}
+            />
+          )}
+          {zone === "calendar" && <div className="zone-full"><CalendarWorkspace {...wsProps} standalone /></div>}
+          {zone === "tasks" && (
+            <div className="zone-full zone-narrow">
+              <header className="zone-head zone-head-pad">
+                <div>
+                  <h1>Tasks</h1>
+                  <p className="w-muted">Every checklist item from every note. Ticking one updates its note.</p>
+                </div>
+              </header>
+              <TasksWorkspace {...wsProps} />
+            </div>
+          )}
+          {zone === "activity" && <ActivityWorkspace {...wsProps} />}
+          {zone === "note" && layout.note && (
+            <div className={`split${showLeft ? " split-open" : ""}`}>
+              {showLeft && (
+                <section className="left-pane" aria-label="Side pane">
+                  <div className="tabs" role="tablist">
+                    {layout.tabs.map((t) => (
+                      <div key={t.id} className={`tab${t.id === activeTab?.id ? " active" : ""}`} role="presentation">
+                        <button role="tab" aria-selected={t.id === activeTab?.id} onClick={() => setLayout((l) => ({ ...l, active: t.id }))}>
+                          <Icon name={TAB_META[t.kind].icon} size={14} />
+                          <span>{t.path ? noteName(t.path) : TAB_META[t.kind].label}</span>
+                        </button>
+                        <button
+                          className="tab-close"
+                          aria-label={`Close ${t.path ? basename(t.path) : TAB_META[t.kind].label}`}
+                          onClick={() => setLayout((l) => {
+                            const tabs = l.tabs.filter((x) => x.id !== t.id);
+                            return { ...l, tabs, active: tabs[tabs.length - 1]?.id ?? null, leftOpen: tabs.length > 0 && l.leftOpen };
+                          })}
+                        >
+                          <Icon name="close" size={12} />
+                        </button>
+                      </div>
+                    ))}
+                    <TabAdder onAdd={(kind) => openTab({ kind })} />
+                  </div>
+                  <div className="tab-body">{activeTab && renderTab(activeTab)}</div>
+                </section>
+              )}
+              <section className="right-pane" aria-label="Note">
+                <NotePane
+                  ref={pane}
+                  vault={vault}
+                  path={layout.note}
+                  host={host}
+                  version={version}
+                  focusMode={focusMode}
+                  printLayout={printLayout}
+                  outlineOpen={outlineOpen}
+                  jump={jump}
+                  onRenamed={(to) => setLayout((l) => ({ ...l, note: to }))}
+                  onOpen={(p) => openPath(p)}
+                  onTag={(t) => { setHomeTag(t); setLayout((l) => ({ ...l, view: "home" })); }}
+                />
+              </section>
+            </div>
+          )}
+        </main>
+
+        {(zone === "note" || zone === "home") && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
+      </div>
 
       {paletteOpen && <CommandPalette open onClose={() => setPaletteOpen(false)} commands={commands} />}
       {settingsOpen && (
@@ -543,6 +655,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           vaultId={record.id}
           account={account}
           customThemes={customThemes}
+          section={settingsOpen === "ai" ? "ai" : undefined}
           onClose={() => { setSettingsOpen(false); void doSync(); }}
           onAccount={onAccount}
           onEditTheme={() => { setSettingsOpen(false); setThemeEditor(true); }}

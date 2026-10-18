@@ -37,6 +37,29 @@ export const auth = {
   logout: () => post<{ ok: true }>("auth/logout", {}),
 };
 
+export type AiMode = "builtin" | "own";
+export type AiTool = "explain" | "summarize" | "flashcards" | "quiz" | "steps" | "mainpoint" | "whereWasI" | "ask";
+
+export interface AiState {
+  mode: AiMode;
+  hasOwnKey: boolean;
+  /** Last 4 characters of the saved key. The key itself never comes back. */
+  keyHint: string | null;
+  builtinAvailable: boolean;
+  limit: number;
+  usedToday: number;
+}
+
+const del = <T>(path: string) => call<T>(path, { method: "DELETE" });
+
+export const aiApi = {
+  state: () => call<AiState>("ai/settings"),
+  setMode: (mode: AiMode) => post<AiState>("ai/settings", { mode }),
+  saveKey: (apiKey: string) => post<AiState>("ai/settings", { apiKey }),
+  removeKey: () => del<AiState>("ai/settings"),
+  run: (tool: AiTool, text: string, question?: string) => post<{ text: string; model: string }>("ai/run", { tool, text, question }),
+};
+
 export interface RemoteVault {
   id: string;
   name: string;

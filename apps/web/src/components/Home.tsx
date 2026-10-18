@@ -3,6 +3,7 @@ import type { VaultRecord, Vault } from "@writalin/vault";
 import { tagMatches, taskDate } from "@writalin/vault";
 import { isoDate, noteName, dirname, type VaultPath } from "@writalin/shared";
 import { Icon, toast } from "@writalin/ui";
+import { ContributionGraph, useContributions } from "@writalin/workspaces";
 
 interface Props {
   vault: Vault;
@@ -12,11 +13,19 @@ interface Props {
   onSwitchVault: (rec: VaultRecord | "new-folder" | "new-browser") => void;
   onOpen: (path: VaultPath, opts?: { line?: number }) => void;
   onNewNote: (folder?: string) => void;
+  onZone: (zone: "calendar" | "tasks" | "activity") => void;
   initialTag?: string;
 }
 
+function greeting(): string {
+  const h = new Date().getHours();
+  return h < 5 ? "Working late" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
 /** Vault switcher, folders, recent notes, tags, search and today's tasks. */
-export function Home({ vault, version, records, currentId, onSwitchVault, onOpen, onNewNote, initialTag }: Props) {
+export function Home({ vault, version, records, currentId, onSwitchVault, onOpen, onNewNote, onZone, initialTag }: Props) {
+  const activity = useContributions(vault, version, 52, "both");
+  const todayWords = vault.activity.days[isoDate()]?.words ?? 0;
   const [q, setQ] = useState("");
   const [tag, setTag] = useState(initialTag ?? "");
   const [folder, setFolder] = useState<string | null>(null);
@@ -40,7 +49,9 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
     <div className="home">
       <div className="home-inner">
         <header className="home-head">
-          <div className="vault-switch">
+          <div>
+            <h1 className="home-title">{greeting()}</h1>
+            <div className="vault-switch">
             <label className="w-sr-only" htmlFor="vault-select">Vault</label>
             <select
               id="vault-select"
@@ -58,13 +69,14 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
               <option value="new-folder">Open another folder…</option>
               <option value="new-browser">New vault in this browser…</option>
             </select>
+            </div>
           </div>
           <button className="w-btn w-btn-primary" onClick={() => onNewNote(folder ?? undefined)}>
             <Icon name="plus" size={16} /> New note
           </button>
         </header>
 
-        <div className="home-search">
+        <div className="home-search w-glow">
           <Icon name="search" />
           <input className="w-input" placeholder="Search notes…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search notes" />
         </div>
@@ -76,7 +88,7 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
             <ul className="note-list">
               {hits.map((h) => (
                 <li key={h.path}>
-                  <button onClick={() => onOpen(h.path)}>
+                  <button className="w-glow" onClick={() => onOpen(h.path)}>
                     <span className="note-list-name">{noteName(h.path)}</span>
                     <span className="note-list-snippet">{h.snippet}</span>
                   </button>
@@ -85,6 +97,22 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
             </ul>
           </section>
         ) : (
+          <>
+          <section className="home-card home-activity">
+            <div className="home-card-head">
+              <div>
+                <h2>Your writing</h2>
+                <p className="w-muted w-small">
+                  {todayWords > 0 ? `${todayWords.toLocaleString()} words today` : "Nothing written yet today"}
+                  {activity.currentStreak > 1 ? ` · ${activity.currentStreak}-day streak` : ""}
+                </p>
+              </div>
+              <button className="w-btn w-btn-small w-btn-ghost" onClick={() => onZone("activity")}>
+                See all <Icon name="chevronRight" size={14} />
+              </button>
+            </div>
+            <div className="contrib-mini"><ContributionGraph summary={activity} /></div>
+          </section>
           <div className="home-grid">
             <section className="home-section">
               <h2>{tag ? `#${tag}` : folder != null ? folder || "Top level" : "Recent"}</h2>
@@ -94,7 +122,7 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
               <ul className="note-list">
                 {notes.map((n) => (
                   <li key={n.path}>
-                    <button onClick={() => onOpen(n.path)}>
+                    <button className="w-glow" onClick={() => onOpen(n.path)}>
                       <span className="note-list-name">{n.name}</span>
                       <span className="note-list-meta">{dirname(n.path) || "—"} · {new Date(n.mtime).toLocaleDateString()}</span>
                     </button>
@@ -104,7 +132,7 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
             </section>
             <aside className="home-side">
               <section className="home-section">
-                <h2>Today</h2>
+                <h2 className="home-h2-row">Today <button className="w-btn w-btn-small w-btn-ghost" onClick={() => onZone("calendar")}>Calendar <Icon name="chevronRight" size={14} /></button></h2>
                 {dueToday.length === 0 ? (
                   <p className="w-muted">Nothing due. Enjoy the calm.</p>
                 ) : (
@@ -153,6 +181,7 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
               )}
             </aside>
           </div>
+          </>
         )}
       </div>
     </div>

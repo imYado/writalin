@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Vault, VaultSettings } from "@writalin/vault";
 import { BUILT_IN_THEMES, Modal, toast, type Theme } from "@writalin/ui";
-import { auth, syncApi, type Account, type RemoteVault } from "../api";
+import { aiApi, ApiError, auth, syncApi, type Account, type AiState, type RemoteVault } from "../api";
 import { getSyncLink, linkSync, runSync, unlinkSync } from "../state/sync";
 
 interface Props {
@@ -12,14 +12,19 @@ interface Props {
   onClose: () => void;
   onAccount: (a: Account | null) => void;
   onEditTheme: () => void;
+  /** Scroll to a section when opening, e.g. from the AI panel. */
+  section?: "ai";
 }
 
-export function SettingsModal({ vault, vaultId, account, customThemes, onClose, onAccount, onEditTheme }: Props) {
+export function SettingsModal({ vault, vaultId, account, customThemes, onClose, onAccount, onEditTheme, section }: Props) {
   const [s, setS] = useState<VaultSettings>(vault.settings);
   const set = <K extends keyof VaultSettings>(k: K, v: VaultSettings[K]) => {
     setS((x) => ({ ...x, [k]: v }));
     void vault.saveSettings({ [k]: v });
   };
+  useEffect(() => {
+    if (section) requestAnimationFrame(() => document.getElementById(`settings-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, [section]);
   return (
     <Modal title="Settings" onClose={onClose} width={560}>
       <section className="settings-section">
@@ -32,7 +37,7 @@ export function SettingsModal({ vault, vaultId, account, customThemes, onClose, 
               aria-checked={s.theme === t.id}
               className="theme-swatch"
               onClick={() => set("theme", t.id)}
-              style={{ background: t.tokens.surface, color: t.tokens.text, borderColor: s.theme === t.id ? t.tokens.accent : t.tokens.border }}
+              style={{ background: t.tokens.surface, color: t.tokens.text, boxShadow: s.theme === t.id ? `0 0 0 2px ${t.tokens.accent}` : undefined }}
             >
               <span className="theme-dot" style={{ background: t.tokens.accent }} />
               {t.name}
@@ -85,6 +90,7 @@ export function SettingsModal({ vault, vaultId, account, customThemes, onClose, 
           </label>
         </div>
       </section>
+      <AiSection vault={vault} account={account} enabled={s.aiEnabled} onEnabled={(v) => set("aiEnabled", v)} />
       <AccountSection vault={vault} vaultId={vaultId} account={account} onAccount={onAccount} />
     </Modal>
   );
@@ -154,6 +160,108 @@ function AccountSection({ vault, vaultId, account, onAccount }: { vault: Vault; 
         {!account.hasPassword && <a className="w-btn w-btn-small" href="/login">Create a password</a>}
         <button className="w-btn w-btn-small" onClick={async () => { await auth.logout().catch(() => {}); onAccount(null); }}>Sign out</button>
       </div>
+    </section>
+  );
+}
+
+function AiSection({ account, enabled, onEnabled }: { vault: Vault; account: Account | null | undefined; enabled: boolean; onEnabled: (v: boolean) => void }) {
+  const [state, setState] = useState<AiState | null>(null);
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (account && enabled) aiApi.state().then(setState).catch(() => setState(null));
+  }, [account, enabled]);
+
+  const act = async (fn: () => Promise<AiState>, done?: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      setState(await fn());
+      if (done) toast(done);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Something went wrong. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="settings-section" id="settings-ai">
+      <h3>AI study helper</h3>
+      <label className="settings-toggle">
+        <input type="checkbox" checked={enabled} onChange={(e) => onEnabled(e.target.checked)} />
+        <span>
+          <strong>Use AI in this vault</strong>
+          <small className="w-muted">Off by default. AI only sees the text you send it, when you press a button.</small>
+        </span>
+      </label>
+      {enabled && !account && <p className="w-muted w-small">Sign in to use AI. Requests go through your account so keys stay on the server.</p>}
+      {enabled && account && (
+        <>
+          <div className="option-cards" role="radiogroup" aria-label="Which AI key to use">
+            <button
+              role="radio"
+              aria-checked={state?.mode !== "own"}
+              className="option-card w-glow"
+              disabled={busy}
+              onClick={() => void act(() => aiApi.setMode("builtin"))}
+            >
+              <span className="option-title"><span className="option-dot" /> Built-in AI</span>
+              <span className="option-desc">
+                {state && !state.builtinAvailable ? "Not switched on yet on this server." : `Nothing to set up. Up to ${state?.mode === "builtin" ? state.limit : 40} requests a day.`}
+              </span>
+            </button>
+            <button
+              role="radio"
+              aria-checked={state?.mode === "own"}
+              className="option-card w-glow"
+              disabled={busy || (!state?.hasOwnKey && state?.mode !== "own")}
+              onClick={() => void act(() => aiApi.setMode("own"))}
+              title={!state?.hasOwnKey ? "Save a key below first" : undefined}
+            >
+              <span className="option-title"><span className="option-dot" /> My own API key</span>
+              <span className="option-desc">{state?.hasOwnKey ? `Saved key ••••${state.keyHint}` : "Use your Anthropic key. Save one below."}</span>
+            </button>
+          </div>
+          <form
+            className="w-col"
+            autoComplete="off"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (key.trim()) void act(() => aiApi.saveKey(key.trim()), "Key saved and switched on.").then(() => setKey(""));
+            }}
+          >
+            <label className="w-field">
+              <span>{state?.hasOwnKey ? "Replace your Anthropic API key" : "Your Anthropic API key"}</span>
+              <div className="w-row">
+                <input
+                  type="password"
+                  className="w-input"
+                  style={{ flex: 1 }}
+                  value={key}
+                  placeholder="sk-ant-…"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(e) => setKey(e.target.value)}
+                />
+                <button className="w-btn w-btn-primary w-btn-small" disabled={busy || !key.trim()}>{busy ? "Checking…" : "Save key"}</button>
+              </div>
+            </label>
+            <p className="w-muted settings-note">
+              Your key is checked with Anthropic, then encrypted (AES-256) on our server. It's never sent back to your browser; only its last 4 characters are shown.
+            </p>
+            {state?.hasOwnKey && (
+              <div>
+                <button type="button" className="w-btn w-btn-small w-btn-danger" disabled={busy} onClick={() => void act(() => aiApi.removeKey(), "Key removed.")}>Remove my key</button>
+              </div>
+            )}
+          </form>
+          {error && <p className="ai-error" role="alert">{error}</p>}
+          {state && <p className="w-muted settings-note">{state.usedToday} of {state.limit} requests used today.</p>}
+        </>
+      )}
     </section>
   );
 }
