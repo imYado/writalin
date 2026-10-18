@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import type { NoteMeta, Task } from "@writalin/shared";
 import { addDays, isoDate, parseIsoDate, startOfWeek, noteName } from "@writalin/shared";
-import { formatTaskLine, tagMatches, taskDate } from "@writalin/vault";
-import { Modal, toast } from "@writalin/ui";
+import { createdDay, formatTaskLine, tagMatches, taskDate } from "@writalin/vault";
+import { Icon, Modal, toast } from "@writalin/ui";
 import type { WorkspaceProps } from "./types";
 
 type View = "month" | "week" | "day";
@@ -12,10 +12,17 @@ interface DayItems {
   tasks: Task[];
 }
 
-/** Notes on the day they were created, plus reminders/events (dated task lines). */
-export function CalendarWorkspace({ vault, version, openNote, currentNote }: WorkspaceProps) {
+const linkText = (s: string) => s.replace(/\[\[([^\]|]+)(\|([^\]]+))?\]\]/g, (_, a, __, b) => b ?? a);
+
+/**
+ * Notes on the day they were created, plus reminders/events (dated task
+ * lines). `standalone` is the full-page Calendar zone: bigger grid, and a
+ * side panel with the selected day and what's coming up.
+ */
+export function CalendarWorkspace({ vault, version, openNote, currentNote, standalone = false }: WorkspaceProps & { standalone?: boolean }) {
   const [view, setView] = useState<View>("month");
   const [cursor, setCursor] = useState(() => new Date());
+  const [selected, setSelected] = useState(() => isoDate());
   const [tag, setTag] = useState("");
   const [adding, setAdding] = useState<string | null>(null);
 
@@ -24,7 +31,7 @@ export function CalendarWorkspace({ vault, version, openNote, currentNote }: Wor
     const get = (d: string) => map.get(d) ?? (map.set(d, { notes: [], tasks: [] }), map.get(d)!);
     for (const n of vault.notes.values()) {
       if (tag && !n.tags.some((t) => tagMatches(t, tag))) continue;
-      const created = typeof n.frontmatter.created === "string" ? n.frontmatter.created.slice(0, 10) : isoDate(new Date(n.mtime));
+      const created = createdDay(n) ?? isoDate(new Date(n.mtime));
       get(created).notes.push(n);
       for (const t of n.tasks) {
         const d = taskDate(t);
@@ -62,12 +69,14 @@ export function CalendarWorkspace({ vault, version, openNote, currentNote }: Wor
         : cursor.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 
   return (
-    <div className="ws ws-calendar">
+    <div className={`ws ws-calendar${standalone ? " cal-standalone" : ""}`}>
       <div className="ws-toolbar">
-        <button className="w-icon-btn" onClick={() => step(-1)} aria-label="Previous">‹</button>
-        <button className="w-btn w-btn-small" onClick={() => setCursor(new Date())}>Today</button>
-        <button className="w-icon-btn" onClick={() => step(1)} aria-label="Next">›</button>
         <h2 className="cal-title">{title}</h2>
+        <div className="cal-nav">
+          <button className="w-icon-btn" onClick={() => step(-1)} aria-label="Previous"><Icon name="chevronLeft" size={16} /></button>
+          <button className="w-btn w-btn-small" onClick={() => { setCursor(new Date()); setSelected(today); }}>Today</button>
+          <button className="w-icon-btn" onClick={() => step(1)} aria-label="Next"><Icon name="chevronRight" size={16} /></button>
+        </div>
         <div className="w-row cal-views" role="group" aria-label="Calendar view">
           {(["month", "week", "day"] as View[]).map((v) => (
             <button key={v} className="w-chip" aria-pressed={view === v} onClick={() => setView(v)}>{v[0]!.toUpperCase() + v.slice(1)}</button>
@@ -77,8 +86,14 @@ export function CalendarWorkspace({ vault, version, openNote, currentNote }: Wor
           <option value="">All tags</option>
           {tags.map((t) => <option key={t} value={t}>#{t}</option>)}
         </select>
+        {standalone && (
+          <button className="w-btn w-btn-primary w-btn-small" onClick={() => setAdding(selected)}>
+            <Icon name="plus" size={14} /> Reminder
+          </button>
+        )}
       </div>
-      <div className={`cal-grid cal-${view}`} role="grid">
+      <div className="cal-body">
+      <div className={`cal-grid cal-v-${view}`} role="grid">
         {view !== "day" &&
           days.slice(0, 7).map((d) => (
             <div key={`h${d.getDay()}`} className="cal-dow" role="columnheader">
@@ -95,11 +110,25 @@ export function CalendarWorkspace({ vault, version, openNote, currentNote }: Wor
             ...(items?.notes ?? []).map((n) => ({ kind: "note" as const, n })),
           ];
           return (
-            <div key={key} role="gridcell" className={`cal-day${outside ? " outside" : ""}${key === today ? " today" : ""}`}>
+            <div
+              key={key}
+              role="gridcell"
+              aria-selected={standalone ? key === selected : undefined}
+              className={`cal-day${outside ? " outside" : ""}${key === today ? " today" : ""}${standalone && key === selected ? " selected" : ""}`}
+              onClick={standalone ? (e) => { if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains("cal-items")) setSelected(key); } : undefined}
+            >
               <div className="cal-day-head">
-                <button className="cal-date" onClick={() => { setCursor(d); setView("day"); }} aria-label={d.toDateString()}>
+                <button
+                  className="cal-date"
+                  onClick={() => (standalone ? setSelected(key) : (setCursor(d), setView("day")))}
+                  onDoubleClick={() => { setCursor(d); setView("day"); }}
+                  aria-label={d.toDateString()}
+                >
                   {d.getDate()}
                 </button>
+                {standalone && (vault.activity.days[key]?.words ?? 0) > 0 && (
+                  <span className="cal-words" title={`${vault.activity.days[key]!.words} words written`}>{compact(vault.activity.days[key]!.words)}w</span>
+                )}
                 <button className="cal-add" onClick={() => setAdding(key)} aria-label={`Add reminder on ${d.toDateString()}`}>+</button>
               </div>
               <ul className="cal-items">
@@ -108,7 +137,7 @@ export function CalendarWorkspace({ vault, version, openNote, currentNote }: Wor
                     <li key={`t${e.t.path}${e.t.line}`} className={`cal-task${e.t.status === "done" ? " done" : ""}`}>
                       <button onClick={() => openNote(e.t.path, { line: e.t.line })} title={e.t.text}>
                         {e.t.time && <span className="cal-time">{e.t.time}</span>}
-                        {e.t.text.replace(/\[\[([^\]|]+)(\|([^\]]+))?\]\]/g, (_, a, __, b) => b ?? a)}
+                        {linkText(e.t.text)}
                       </button>
                     </li>
                   ) : (
@@ -125,6 +154,22 @@ export function CalendarWorkspace({ vault, version, openNote, currentNote }: Wor
           );
         })}
       </div>
+      {standalone && (
+        <DayPanel
+          date={selected}
+          items={byDay.get(selected)}
+          words={vault.activity.days[selected]?.words ?? 0}
+          upcoming={[...byDay.entries()]
+            .filter(([d]) => d > today && d <= isoDate(addDays(new Date(), 14)))
+            .sort(([a], [b]) => a.localeCompare(b))
+            .flatMap(([d, it]) => it.tasks.filter((t) => t.status === "todo").map((t) => ({ d, t })))
+            .slice(0, 12)}
+          openNote={openNote}
+          onAdd={() => setAdding(selected)}
+          onToggle={(t) => void vault.toggleTask(t).catch((e) => toast((e as Error).message, { tone: "warn" }))}
+        />
+      )}
+      </div>
       {adding && (
         <AddReminder
           date={adding}
@@ -140,6 +185,76 @@ export function CalendarWorkspace({ vault, version, openNote, currentNote }: Wor
         />
       )}
     </div>
+  );
+}
+
+function compact(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+}
+
+function DayPanel({ date, items, words, upcoming, openNote, onAdd, onToggle }: {
+  date: string;
+  items: DayItems | undefined;
+  words: number;
+  upcoming: { d: string; t: Task }[];
+  openNote: WorkspaceProps["openNote"];
+  onAdd: () => void;
+  onToggle: (t: Task) => void;
+}) {
+  const day = parseIsoDate(date) ?? new Date();
+  const tasks = items?.tasks ?? [];
+  const notes = items?.notes ?? [];
+  return (
+    <aside className="cal-side" aria-label="Selected day">
+      <section className="cal-side-card">
+        <div className="cal-side-date">
+          <span className="cal-side-dow">{day.toLocaleDateString(undefined, { weekday: "long" })}</span>
+          <span className="cal-side-day">{day.toLocaleDateString(undefined, { month: "long", day: "numeric" })}</span>
+        </div>
+        <div className="cal-side-stats">
+          <span><b>{tasks.length}</b> reminders</span>
+          <span><b>{notes.length}</b> notes</span>
+          <span><b>{words}</b> words</span>
+        </div>
+        {tasks.length + notes.length === 0 ? (
+          <p className="w-muted w-small">Nothing on this day.</p>
+        ) : (
+          <ul className="cal-side-list">
+            {tasks.map((t) => (
+              <li key={`t${t.path}${t.line}`} className={t.status === "done" ? "done" : ""}>
+                <input type="checkbox" checked={t.status === "done"} onChange={() => onToggle(t)} aria-label={`Complete: ${t.text}`} />
+                <button onClick={() => openNote(t.path, { line: t.line })}>
+                  {t.time && <span className="cal-time">{t.time}</span>}
+                  {linkText(t.text)}
+                </button>
+              </li>
+            ))}
+            {notes.map((n) => (
+              <li key={`n${n.path}`} className="cal-side-note">
+                <Icon name="file" size={14} />
+                <button onClick={() => openNote(n.path)}>{n.name}</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button className="w-btn w-btn-small" onClick={onAdd}><Icon name="plus" size={14} /> Add to this day</button>
+      </section>
+      <section className="cal-side-card">
+        <h3>Next two weeks</h3>
+        {upcoming.length === 0 ? (
+          <p className="w-muted w-small">No reminders coming up.</p>
+        ) : (
+          <ul className="cal-side-list">
+            {upcoming.map(({ d, t }) => (
+              <li key={`u${t.path}${t.line}`}>
+                <span className="cal-side-when">{parseIsoDate(d)!.toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}</span>
+                <button onClick={() => openNote(t.path, { line: t.line })}>{linkText(t.text)}</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </aside>
   );
 }
 

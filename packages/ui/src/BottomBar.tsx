@@ -12,8 +12,20 @@ export interface BarItem {
 }
 
 /** One calm dock at the bottom. Panels open upward, one at a time. */
-export function BottomBar({ items, compact = false }: { items: BarItem[]; compact?: boolean }) {
-  const [openId, setOpenId] = useState<string | null>(null);
+export function BottomBar({ items, compact = false, openId: controlled, onOpenChange }: {
+  items: BarItem[];
+  compact?: boolean;
+  /** Control which panel is open (e.g. open AI from the command palette). */
+  openId?: string | null;
+  onOpenChange?: (id: string | null) => void;
+}) {
+  const [own, setOwn] = useState<string | null>(null);
+  const openId = controlled !== undefined ? controlled : own;
+  const setOpenId = (v: string | null | ((o: string | null) => string | null)) => {
+    const next = typeof v === "function" ? v(openId) : v;
+    setOwn(next);
+    onOpenChange?.(next);
+  };
   const ref = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!openId) return;
@@ -51,7 +63,7 @@ export function BottomBar({ items, compact = false }: { items: BarItem[]; compac
             }}
             title={it.label}
           >
-            <Icon name={it.icon} size={compact ? 18 : 20} />
+            <Icon name={it.icon} size={18} />
             {!compact && <span>{it.label}</span>}
           </button>
         ))}
@@ -61,13 +73,26 @@ export function BottomBar({ items, compact = false }: { items: BarItem[]; compac
 }
 
 /** A grid of labelled buttons for dock panels (Tools, Insert, Export…). */
-export function ActionGrid({ actions }: { actions: { label: string; icon?: IconName; hint?: string; onClick: () => void; disabled?: boolean }[] }) {
+export interface GridAction {
+  label: string;
+  /** Small second line saying what it does. */
+  desc?: string;
+  icon?: IconName;
+  hint?: string;
+  onClick: () => void;
+  disabled?: boolean;
+}
+
+export function ActionGrid({ actions }: { actions: GridAction[] }) {
   return (
     <div className="w-action-grid">
       {actions.map((a) => (
         <button key={a.label} className="w-action" onClick={a.onClick} disabled={a.disabled} title={a.hint}>
           {a.icon && <Icon name={a.icon} size={16} />}
-          <span>{a.label}</span>
+          <span className="w-action-text">
+            <span className="w-action-label">{a.label}</span>
+            {a.desc && <span className="w-action-desc">{a.desc}</span>}
+          </span>
           {a.hint && <kbd>{a.hint}</kbd>}
         </button>
       ))}

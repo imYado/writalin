@@ -6,6 +6,9 @@ import "@writalin/editor/editor.css";
 import "@writalin/workspaces/styles.css";
 import "./app.css";
 import { App } from "./App";
+import { installGlow } from "@writalin/ui";
+
+installGlow();
 
 registerSW({ immediate: true });
 

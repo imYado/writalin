@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { fuzzyFilter } from "@writalin/shared";
+import { Icon, type IconName } from "./icons";
 
 export interface Command {
   id: string;
   title: string;
   /** Section heading, e.g. "Notes", "Workspaces", "AI". */
   group: string;
+  /** One short line under the title saying what it does. */
+  description?: string;
+  icon?: IconName;
   hint?: string;
   shortcut?: string;
   keywords?: string;
@@ -40,7 +44,7 @@ export function CommandPalette({ open, onClose, commands, placeholder = "Type a 
 
   const results = useMemo(() => {
     if (!query.trim()) return commands.slice(0, 60).map((item) => ({ item, indices: [] as number[], score: 0 }));
-    return fuzzyFilter(query, commands, (c) => `${c.title} ${c.keywords ?? ""}`, 60);
+    return fuzzyFilter(query, commands, (c) => `${c.title} ${c.keywords ?? ""} ${c.description ?? ""}`, 60);
   }, [query, commands]);
 
   useEffect(() => {
@@ -59,6 +63,8 @@ export function CommandPalette({ open, onClose, commands, placeholder = "Type a 
   return (
     <div className="w-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="w-palette" role="dialog" aria-modal="true" aria-label="Command palette">
+        <div className="w-palette-search">
+        <Icon name="search" />
         <input
           ref={inputRef}
           className="w-palette-input"
@@ -88,6 +94,8 @@ export function CommandPalette({ open, onClose, commands, placeholder = "Type a 
             }
           }}
         />
+        <kbd>Esc</kbd>
+        </div>
         <ul className="w-palette-list" id="w-palette-list" role="listbox" ref={listRef}>
           {results.length === 0 && <li className="w-palette-empty">Nothing matches “{query}”.</li>}
           {results.map((r, i) => {
@@ -105,15 +113,23 @@ export function CommandPalette({ open, onClose, commands, placeholder = "Type a 
                   onMouseMove={() => setActive(i)}
                   onClick={() => run(r.item)}
                 >
-                  <span className="w-palette-title">{highlight(r.item.title, r.indices)}</span>
+                  <span className="w-palette-icon"><Icon name={r.item.icon ?? "chevronRight"} size={16} /></span>
+                  <span className="w-palette-text">
+                    <span className="w-palette-title">{highlight(r.item.title, r.indices.filter((x) => x < r.item.title.length))}</span>
+                    {(r.item.description || r.item.hint) && <span className="w-palette-desc">{r.item.description ?? r.item.hint}</span>}
+                  </span>
                   {query.trim() && <span className="w-palette-meta">{r.item.group}</span>}
-                  {r.item.hint && <span className="w-palette-meta">{r.item.hint}</span>}
                   {r.item.shortcut && <kbd>{r.item.shortcut}</kbd>}
                 </div>
               </li>
             );
           })}
         </ul>
+        <div className="w-palette-foot" aria-hidden="true">
+          <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+          <span><kbd>Enter</kbd> run</span>
+          <span><kbd>Esc</kbd> close</span>
+        </div>
       </div>
     </div>
   );

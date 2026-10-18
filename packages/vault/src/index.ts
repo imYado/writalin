@@ -5,3 +5,4 @@ export * from "./search";
 export * from "./settings";
 export * from "./zip";
 export * from "./sync";
+export * from "./activity";

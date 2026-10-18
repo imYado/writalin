@@ -63,3 +63,22 @@ create table if not exists sync_files (
   primary key (vault_id, path)
 );
 create index if not exists sync_files_version_idx on sync_files (vault_id, version);
+
+-- AI helper. Each account picks the built-in key (server env) or its own
+-- Anthropic key. Own keys are encrypted with AES-256-GCM before they reach the
+-- database (see api/_lib/secrets.ts); the browser only ever sees the last 4 characters.
+create table if not exists ai_settings (
+  user_id uuid primary key references users(id) on delete cascade,
+  mode text not null default 'builtin' check (mode in ('builtin', 'own')),
+  key_ciphertext text,
+  key_hint text,
+  updated_at timestamptz not null default now()
+);
+
+-- Requests per account per day, for the daily limits.
+create table if not exists ai_usage (
+  user_id uuid not null references users(id) on delete cascade,
+  day date not null,
+  requests int not null default 0,
+  primary key (user_id, day)
+);

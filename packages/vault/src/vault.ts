@@ -1,5 +1,5 @@
 import type { NoteMeta, Task, VaultPath } from "@writalin/shared";
-import { Emitter, isHiddenPath, isMarkdown, isoDateTime, joinPath, noteName, normalizePath, sanitizeFileName, dirname, basename, stripExt } from "@writalin/shared";
+import { Emitter, isHiddenPath, isMarkdown, isoDate, isoDateTime, joinPath, noteName, normalizePath, sanitizeFileName, dirname, basename, stripExt } from "@writalin/shared";
 import type { FileStat, FileStore } from "./fs/types";
 import { parseNote } from "./markdown/parse";
 import { splitFrontmatter, updateFrontmatter } from "./markdown/frontmatter";
@@ -7,6 +7,7 @@ import { rewriteWikiLinks, rewriteMarkdownLinks } from "./markdown/links";
 import { toggleTaskLine } from "./markdown/tasks";
 import { tagMatches, normalizeTag } from "./markdown/tags";
 import { SearchIndex } from "./search";
+import { ACTIVITY_PATH, addActivity, emptyActivity, mergeActivity, type ActivityLog } from "./activity";
 import { DEFAULT_SETTINGS, SETTINGS_PATH, SCRATCHPAD_PATH, type VaultSettings } from "./settings";
 
 export type VaultEvent =
@@ -15,7 +16,8 @@ export type VaultEvent =
   | { type: "created"; path: VaultPath }
   | { type: "deleted"; path: VaultPath }
   | { type: "renamed"; from: VaultPath; to: VaultPath }
-  | { type: "settings"; settings: VaultSettings };
+  | { type: "settings"; settings: VaultSettings }
+  | { type: "activity" };
 
 /** Thrown when a file changed on disk since the editor loaded it. */
 export class ConflictError extends Error {
@@ -47,6 +49,9 @@ export class Vault {
   /** mtimes Writalin itself produced, so a refresh doesn't report our own saves as external. */
   private known = new Map<VaultPath, number>();
   private byName = new Map<string, VaultPath[]>();
+  /** Words written per day. Saved a few seconds after the last edit. */
+  activity: ActivityLog = emptyActivity();
+  private activityTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(public readonly store: FileStore, private cache?: IndexCache) {}
 
@@ -56,6 +61,7 @@ export class Vault {
 
   async open(): Promise<void> {
     await this.loadSettings();
+    await this.loadActivity();
     const stats = await this.store.list();
     await Promise.all(stats.map((s) => this.indexFile(s, false)));
     this.events.emit({ type: "indexed" });
@@ -161,6 +167,30 @@ export class Vault {
     this.events.emit({ type: "settings", settings: this.settings });
   }
 
+  // ---------- activity ----------
+
+  async loadActivity(): Promise<ActivityLog> {
+    const raw = await this.readJson<ActivityLog>(ACTIVITY_PATH);
+    this.activity = raw && raw.version === 1 && raw.days ? mergeActivity(emptyActivity(), raw) : emptyActivity();
+    return this.activity;
+  }
+
+  /** Count words written today. Deleting text never lowers the count. */
+  recordWords(words: number, date = isoDate()): void {
+    addActivity(this.activity, date, { words: Math.max(0, words), edits: 1 });
+    this.events.emit({ type: "activity" });
+    clearTimeout(this.activityTimer);
+    this.activityTimer = setTimeout(() => void this.saveActivity(), 3000);
+  }
+
+  async saveActivity(): Promise<void> {
+    clearTimeout(this.activityTimer);
+    // Another computer may have written to the log since we read it (sync).
+    const disk = await this.readJson<ActivityLog>(ACTIVITY_PATH);
+    if (disk?.version === 1 && disk.days) this.activity = mergeActivity(disk, this.activity);
+    await this.writeJson(ACTIVITY_PATH, this.activity).catch(() => {});
+  }
+
   async readJson<T>(path: VaultPath): Promise<T | null> {
     try {
       return JSON.parse(await this.store.readText(path)) as T;
@@ -198,7 +228,9 @@ export class Vault {
     this.known.set(path, stat.mtime);
     this.files.set(path, stat);
     if (isMarkdown(path)) {
+      const before = this.notes.get(path)?.words;
       const meta = parseNote(path, text, stat);
+      if (opts.touch && (before != null || isNew)) this.recordWords((meta.words ?? 0) - (before ?? 0));
       this.setMeta(meta, text);
       void this.cache?.set(path, { mtime: stat.mtime, size: stat.size, meta, text });
     }

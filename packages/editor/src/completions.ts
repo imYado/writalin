@@ -19,30 +19,30 @@ const today = () => {
 };
 
 export const SLASH_ITEMS: SlashItem[] = [
-  { label: "Heading 1", insert: "# |", block: true, keywords: "title h1" },
-  { label: "Heading 2", insert: "## |", block: true, keywords: "h2 section" },
-  { label: "Heading 3", insert: "### |", block: true, keywords: "h3" },
-  { label: "Checklist", insert: "- [ ] |", block: true, keywords: "todo task checkbox" },
-  { label: "Task with due date", insert: `- [ ] | 📅 ${today()}`, block: true, keywords: "reminder deadline due" },
-  { label: "Bullet list", insert: "- |", block: true, keywords: "ul unordered" },
-  { label: "Numbered list", insert: "1. |", block: true, keywords: "ol ordered" },
-  { label: "Quote", insert: "> |", block: true, keywords: "blockquote" },
-  { label: "Callout: note", insert: "> [!note] |\n> ", block: true, keywords: "info box" },
-  { label: "Callout: tip", insert: "> [!tip] |\n> ", block: true, keywords: "hint box" },
-  { label: "Callout: warning", insert: "> [!warning] |\n> ", block: true, keywords: "caution box" },
-  { label: "Callout: question", insert: "> [!question] |\n> ", block: true, keywords: "ask box" },
-  { label: "Table", insert: "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n| | | |", block: true, keywords: "grid" },
-  { label: "Code block", insert: "```\n|\n```", block: true, keywords: "pre snippet" },
-  { label: "Divider", insert: "---\n|", block: true, keywords: "hr rule line" },
-  { label: "Flashcard", insert: "| :: Answer", block: true, keywords: "card question answer study spaced repetition" },
-  { label: "Link to note", insert: "[[|]]", keywords: "wiki page" },
-  { label: "Highlight", insert: "==|==", keywords: "marker" },
-  { label: "Math", insert: "$$\n|\n$$", block: true, keywords: "equation latex formula" },
-  { label: "Citation", action: "insert-citation", keywords: "cite source reference apa mla" },
-  { label: "PDF quote", action: "insert-pdf-quote", keywords: "highlight pdf page" },
-  { label: "Image", action: "insert-image", keywords: "picture photo" },
-  { label: "Drawing box", action: "insert-drawing", keywords: "sketch draw svg" },
-  { label: "Start focus timer", action: "start-timer", keywords: "pomodoro timer focus" },
+  { label: "Heading 1", detail: "Big section title", insert: "# |", block: true, keywords: "title h1" },
+  { label: "Heading 2", detail: "Medium section title", insert: "## |", block: true, keywords: "h2 section" },
+  { label: "Heading 3", detail: "Small section title", insert: "### |", block: true, keywords: "h3" },
+  { label: "Checklist", detail: "A box you can tick off", insert: "- [ ] |", block: true, keywords: "todo task checkbox" },
+  { label: "Task with due date", detail: "Shows up in Tasks and Calendar", insert: `- [ ] | 📅 ${today()}`, block: true, keywords: "reminder deadline due" },
+  { label: "Bullet list", detail: "Simple list with dots", insert: "- |", block: true, keywords: "ul unordered" },
+  { label: "Numbered list", detail: "Steps in order", insert: "1. |", block: true, keywords: "ol ordered" },
+  { label: "Quote", detail: "Indented quotation", insert: "> |", block: true, keywords: "blockquote" },
+  { label: "Callout: note", detail: "Box for side information", insert: "> [!note] |\n> ", block: true, keywords: "info box" },
+  { label: "Callout: tip", detail: "Box for a helpful hint", insert: "> [!tip] |\n> ", block: true, keywords: "hint box" },
+  { label: "Callout: warning", detail: "Box for something to watch out for", insert: "> [!warning] |\n> ", block: true, keywords: "caution box" },
+  { label: "Callout: question", detail: "Box for an open question", insert: "> [!question] |\n> ", block: true, keywords: "ask box" },
+  { label: "Table", detail: "Rows and columns", insert: "| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n| | | |", block: true, keywords: "grid" },
+  { label: "Code block", detail: "Monospaced code", insert: "```\n|\n```", block: true, keywords: "pre snippet" },
+  { label: "Divider", detail: "Horizontal line", insert: "---\n|", block: true, keywords: "hr rule line" },
+  { label: "Flashcard", detail: "Question :: Answer for studying", insert: "| :: Answer", block: true, keywords: "card question answer study spaced repetition" },
+  { label: "Link to note", detail: "Connect to another note", insert: "[[|]]", keywords: "wiki page" },
+  { label: "Highlight", detail: "Mark important text", insert: "==|==", keywords: "marker" },
+  { label: "Math", detail: "LaTeX equation block", insert: "$$\n|\n$$", block: true, keywords: "equation latex formula" },
+  { label: "Citation", detail: "Source with author, title, year", action: "insert-citation", keywords: "cite source reference apa mla" },
+  { label: "PDF quote", detail: "Quote from a PDF with its page link", action: "insert-pdf-quote", keywords: "highlight pdf page" },
+  { label: "Image", detail: "Insert a picture from your computer", action: "insert-image", keywords: "picture photo" },
+  { label: "Drawing box", detail: "Sketch something by hand", action: "insert-drawing", keywords: "sketch draw svg" },
+  { label: "Start focus timer", detail: "Start a focus session", action: "start-timer", keywords: "pomodoro timer focus" },
 ];
 
 function applySlash(item: SlashItem) {
@@ -76,13 +76,14 @@ function slashSource(ctx: CompletionContext): CompletionResult | null {
   if (query.endsWith("  ")) return null;
   return {
     from,
-    options: SLASH_ITEMS.map((it) => ({
+    options: SLASH_ITEMS.map((it, i) => ({
       label: "/" + it.label,
       displayLabel: it.label,
       detail: it.detail,
       type: it.action ? "function" : "keyword",
       apply: applySlash(it),
-      boost: 0,
+      // Keep the hand-picked order (headings and checklists first).
+      boost: 99 - i,
       section: it.action ? "Insert" : "Blocks",
     })),
     filter: true,
@@ -133,11 +134,13 @@ function slashKeywordSource(ctx: CompletionContext): CompletionResult | null {
   if (!r) return null;
   const q = ctx.state.sliceDoc(r.from + 1, ctx.pos).toLowerCase().trim();
   if (!q) return r;
-  const options = SLASH_ITEMS.filter((it) => `${it.label} ${it.keywords ?? ""}`.toLowerCase().includes(q)).map((it) => ({
+  const options = SLASH_ITEMS.filter((it) => `${it.label} ${it.keywords ?? ""}`.toLowerCase().includes(q)).map((it, i) => ({
     label: "/" + q,
     displayLabel: it.label,
+    detail: it.detail,
     type: it.action ? "function" : "keyword",
     apply: applySlash(it),
+    boost: 99 - i,
     section: it.action ? "Insert" : "Blocks",
   }));
   return { from: r.from, options, filter: false };

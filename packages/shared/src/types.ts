@@ -70,4 +70,6 @@ export interface NoteMeta {
   flashcards: Flashcard[];
   mtime: number;
   size: number;
+  /** Words in the body. Missing on index entries cached by older versions. */
+  words?: number;
 }

@@ -6,6 +6,7 @@ import { parseInlineTags, normalizeTag } from "./tags";
 import { parseHeadings } from "./headings";
 import { parseTasks } from "./tasks";
 import { parseFlashcards } from "./flashcards";
+import { countWords } from "../activity";
 
 export function lineCount(s: string): number {
   let n = 0;
@@ -31,5 +32,6 @@ export function parseNote(path: VaultPath, text: string, stat: { mtime: number; 
     flashcards: parseFlashcards(body, path, lineOffset),
     mtime: stat.mtime,
     size: stat.size,
+    words: countWords(body),
   };
 }

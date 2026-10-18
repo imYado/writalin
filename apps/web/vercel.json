@@ -3,6 +3,11 @@
   "framework": "vite",
   "buildCommand": "vite build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/ai/run.ts": {
+      "maxDuration": 120
+    }
+  },
   "rewrites": [
     {
       "source": "/((?!api/).*)",
