@@ -48,6 +48,18 @@ export interface AiState {
   builtinAvailable: boolean;
   limit: number;
   usedToday: number;
+  /** The service the saved key belongs to, its model (null = the service's default) and, for "custom", its address. */
+  provider: string;
+  model: string | null;
+  baseUrl: string | null;
+  providers: AiProvider[];
+}
+
+export interface AiProvider {
+  id: string;
+  label: string;
+  defaultModel: string;
+  keyUrl: string;
 }
 
 const del = <T>(path: string) => call<T>(path, { method: "DELETE" });
@@ -55,7 +67,8 @@ const del = <T>(path: string) => call<T>(path, { method: "DELETE" });
 export const aiApi = {
   state: () => call<AiState>("ai/settings"),
   setMode: (mode: AiMode) => post<AiState>("ai/settings", { mode }),
-  saveKey: (apiKey: string) => post<AiState>("ai/settings", { apiKey }),
+  saveKey: (key: { apiKey: string; provider: string; model?: string; baseUrl?: string }) => post<AiState>("ai/settings", key),
+  setModel: (model: string) => post<AiState>("ai/settings", { model }),
   removeKey: () => del<AiState>("ai/settings"),
   run: (tool: AiTool, text: string, question?: string) => post<{ text: string; model: string }>("ai/run", { tool, text, question }),
 };

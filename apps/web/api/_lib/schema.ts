@@ -74,4 +74,8 @@ create table if not exists ai_usage (
   requests int not null default 0,
   primary key (user_id, day)
 )`,
+  // Bring-your-own-key for other AI services (Gemini, Grok, DeepSeek…).
+  `alter table ai_settings add column if not exists provider text not null default 'anthropic'`,
+  `alter table ai_settings add column if not exists model text`,
+  `alter table ai_settings add column if not exists base_url text`,
 ];

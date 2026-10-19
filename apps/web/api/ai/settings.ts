@@ -3,6 +3,7 @@ import { requireUser } from "../_lib/auth.js";
 import { db } from "../_lib/db.js";
 import { encryptSecret, keyHint } from "../_lib/secrets.js";
 import { aiAccount, builtinAvailable, dailyLimit, usedToday, verifyKey, type AiMode } from "../_lib/ai.js";
+import { checkCustomBaseUrl, checkKeyShape, isProvider, PROVIDERS, providerList } from "../_lib/providers.js";
 
 async function state(userId: string) {
   const acct = await aiAccount(userId);
@@ -11,6 +12,7 @@ async function state(userId: string) {
     builtinAvailable: builtinAvailable(),
     limit: dailyLimit(acct.mode),
     usedToday: await usedToday(userId),
+    providers: providerList(),
   };
 }
 
@@ -23,17 +25,25 @@ export const GET = handler(async (req) => {
 /** Switch mode and/or save your own key (encrypted before it's stored). */
 export const POST = handler(async (req) => {
   const user = await requireUser(req);
-  const body = await readJson<{ mode?: AiMode; apiKey?: string }>(req, 8 * 1024);
+  const body = await readJson<{ mode?: AiMode; apiKey?: string; provider?: string; model?: string; baseUrl?: string }>(req, 8 * 1024);
   if (body.mode != null && body.mode !== "builtin" && body.mode !== "own") throw new HttpError(400, "Unknown AI mode.");
+  const model = body.model != null ? String(body.model).trim().slice(0, 200) || null : null;
 
   if (body.apiKey != null) {
+    const provider = body.provider ?? "anthropic";
+    if (!isProvider(provider)) throw new HttpError(400, "Unknown AI service.");
     const apiKey = String(body.apiKey).trim();
-    if (!/^sk-ant-[A-Za-z0-9_-]{20,}$/.test(apiKey)) throw new HttpError(400, "That doesn't look like an Anthropic API key (it starts with sk-ant-).");
-    await verifyKey(apiKey);
+    checkKeyShape(provider, apiKey);
+    const baseUrl = provider === "custom" ? checkCustomBaseUrl(String(body.baseUrl ?? "")) : PROVIDERS[provider].baseUrl;
+    const savedModel = await verifyKey(provider, apiKey, model, baseUrl);
     const ciphertext = encryptSecret(apiKey, user.id);
-    await db()`insert into ai_settings (user_id, mode, key_ciphertext, key_hint, updated_at)
-      values (${user.id}, 'own', ${ciphertext}, ${keyHint(apiKey)}, now())
-      on conflict (user_id) do update set mode = 'own', key_ciphertext = excluded.key_ciphertext, key_hint = excluded.key_hint, updated_at = now()`;
+    await db()`insert into ai_settings (user_id, mode, key_ciphertext, key_hint, provider, model, base_url, updated_at)
+      values (${user.id}, 'own', ${ciphertext}, ${keyHint(apiKey)}, ${provider}, ${savedModel}, ${provider === "custom" ? baseUrl : null}, now())
+      on conflict (user_id) do update set mode = 'own', key_ciphertext = excluded.key_ciphertext, key_hint = excluded.key_hint,
+        provider = excluded.provider, model = excluded.model, base_url = excluded.base_url, updated_at = now()`;
+  } else if (body.model != null) {
+    // A new model for the key already saved; a wrong name shows up on the next request.
+    await db()`update ai_settings set model = ${model}, updated_at = now() where user_id = ${user.id}`;
   } else if (body.mode) {
     await db()`insert into ai_settings (user_id, mode, updated_at) values (${user.id}, ${body.mode}, now())
       on conflict (user_id) do update set mode = excluded.mode, updated_at = now()`;

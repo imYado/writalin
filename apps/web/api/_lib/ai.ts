@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db.js";
 import { HttpError } from "./http.js";
 import { decryptSecret } from "./secrets.js";
+import { chat, listModels, PROVIDERS, type ProviderId } from "./providers.js";
 
 export type AiMode = "builtin" | "own";
 
@@ -9,6 +10,9 @@ export interface AiAccount {
   mode: AiMode;
   hasOwnKey: boolean;
   keyHint: string | null;
+  provider: ProviderId;
+  model: string | null;
+  baseUrl: string | null;
 }
 
 export const AI_TOOLS = {
@@ -45,9 +49,16 @@ export function builtinAvailable(): boolean {
 }
 
 export async function aiAccount(userId: string): Promise<AiAccount> {
-  const rows = await db()`select mode, key_ciphertext is not null as has_key, key_hint from ai_settings where user_id = ${userId}`;
-  const r = rows[0] as { mode: AiMode; has_key: boolean; key_hint: string | null } | undefined;
-  return { mode: r?.mode ?? "builtin", hasOwnKey: Boolean(r?.has_key), keyHint: r?.key_hint ?? null };
+  const rows = await db()`select mode, key_ciphertext is not null as has_key, key_hint, provider, model, base_url from ai_settings where user_id = ${userId}`;
+  const r = rows[0] as { mode: AiMode; has_key: boolean; key_hint: string | null; provider: ProviderId; model: string | null; base_url: string | null } | undefined;
+  return {
+    mode: r?.mode ?? "builtin",
+    hasOwnKey: Boolean(r?.has_key),
+    keyHint: r?.key_hint ?? null,
+    provider: r?.provider ?? "anthropic",
+    model: r?.model ?? null,
+    baseUrl: r?.base_url ?? null,
+  };
 }
 
 export async function usedToday(userId: string): Promise<number> {
@@ -68,37 +79,62 @@ export async function takeQuota(userId: string, mode: AiMode): Promise<void> {
   }
 }
 
-/** The key to call Anthropic with. Decrypted only here, only for this request. */
-export async function resolveKey(userId: string): Promise<{ apiKey: string; mode: AiMode }> {
-  const rows = await db()`select mode, key_ciphertext from ai_settings where user_id = ${userId}`;
-  const r = rows[0] as { mode: AiMode; key_ciphertext: string | null } | undefined;
+export interface AiTarget {
+  apiKey: string;
+  mode: AiMode;
+  provider: ProviderId;
+  model: string;
+  baseUrl: string;
+}
+
+/** Which service, model and key to call. The key is decrypted only here, only for this request. */
+export async function resolveKey(userId: string): Promise<AiTarget> {
+  const rows = await db()`select mode, key_ciphertext, provider, model, base_url from ai_settings where user_id = ${userId}`;
+  const r = rows[0] as { mode: AiMode; key_ciphertext: string | null; provider: ProviderId; model: string | null; base_url: string | null } | undefined;
   if (r?.mode === "own") {
     if (!r.key_ciphertext) throw new HttpError(400, "Add your API key in Settings, or switch to the built-in AI.", "ai_no_key");
+    let apiKey: string;
     try {
-      return { apiKey: decryptSecret(r.key_ciphertext, userId), mode: "own" };
+      apiKey = decryptSecret(r.key_ciphertext, userId);
     } catch {
       throw new HttpError(400, "Your saved key can't be read anymore. Please enter it again in Settings.", "ai_key_unreadable");
     }
+    const p = PROVIDERS[r.provider] ?? PROVIDERS.anthropic;
+    return { apiKey, mode: "own", provider: r.provider, model: r.model || p.defaultModel, baseUrl: r.base_url || p.baseUrl };
   }
   const builtin = process.env.ANTHROPIC_API_KEY;
   if (!builtin) throw new HttpError(503, "The built-in AI isn't switched on yet. You can add your own API key in Settings.", "ai_builtin_off");
-  return { apiKey: builtin, mode: "builtin" };
+  return { apiKey: builtin, mode: "builtin", provider: "anthropic", model: process.env.AI_MODEL || PROVIDERS.anthropic.defaultModel, baseUrl: "" };
 }
 
-/** Quick check that a key works before we store it. */
-export async function verifyKey(apiKey: string): Promise<void> {
-  try {
-    await new Anthropic({ apiKey, maxRetries: 0, timeout: 15_000 }).models.list({ limit: 1 });
-  } catch (e) {
-    if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
-      throw new HttpError(400, "Anthropic didn't accept that key. Check that you copied all of it.", "ai_bad_key");
+/**
+ * Check a key works before we store it, and settle on the model to use.
+ * Returns the model name to save (null keeps the service's default).
+ */
+export async function verifyKey(provider: ProviderId, apiKey: string, model: string | null, baseUrl: string): Promise<string | null> {
+  if (provider === "anthropic") {
+    try {
+      await new Anthropic({ apiKey, maxRetries: 0, timeout: 15_000 }).models.list({ limit: 1 });
+    } catch (e) {
+      if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
+        throw new HttpError(400, "Anthropic didn't accept that key. Check that you copied all of it.", "ai_bad_key");
+      }
+      throw new HttpError(502, "Couldn't reach Anthropic to check the key. Try again in a moment.");
     }
-    throw new HttpError(502, "Couldn't reach Anthropic to check the key. Try again in a moment.");
+    return model;
   }
+  const label = PROVIDERS[provider].label;
+  const models = await listModels({ baseUrl, apiKey, label });
+  const wanted = model || PROVIDERS[provider].defaultModel;
+  if (!wanted) throw new HttpError(400, `Type the model name to use${models ? `, for example ${models.slice(0, 3).join(", ")}` : ""}.`);
+  if (models && !models.includes(wanted)) {
+    throw new HttpError(400, `Your ${label} key can't use “${wanted}”. Type one of its models, for example ${models.slice(0, 4).join(", ")}.`, "ai_bad_model");
+  }
+  return model;
 }
 
-export async function runTool(apiKey: string, mode: AiMode, tool: AiTool, text: string, question?: string): Promise<{ text: string; model: string }> {
-  const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 120_000 });
+export async function runTool(target: AiTarget, tool: AiTool, text: string, question?: string): Promise<{ text: string; model: string }> {
+  const { apiKey, mode } = target;
   const instruction = AI_TOOLS[tool];
   const user = [
     instruction,
@@ -107,9 +143,13 @@ export async function runTool(apiKey: string, mode: AiMode, tool: AiTool, text: 
     text,
     "\n</note>",
   ].join("");
+  if (target.provider !== "anthropic") {
+    return chat({ baseUrl: target.baseUrl, apiKey, model: target.model, label: PROVIDERS[target.provider].label }, SYSTEM, user, mode);
+  }
+  const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 120_000 });
   try {
     const res = await client.beta.messages.create({
-      model: process.env.AI_MODEL || "claude-opus-5-5",
+      model: target.model,
       max_tokens: 8000,
       // Study help is short; low effort keeps answers quick. Thinking stays adaptive.
       output_config: { effort: "low" },

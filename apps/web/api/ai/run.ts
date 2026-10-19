@@ -14,8 +14,8 @@ export const POST = handler(async (req) => {
   const question = tool === "ask" ? String(body.question ?? "").trim().slice(0, 2000) : undefined;
   if (tool === "ask" && !question) throw new HttpError(400, "Type a question first.");
 
-  const { apiKey, mode } = await resolveKey(user.id);
-  await takeQuota(user.id, mode);
-  const out = await runTool(apiKey, mode, tool, text, question);
+  const target = await resolveKey(user.id);
+  await takeQuota(user.id, target.mode);
+  const out = await runTool(target, tool, text, question);
   return json(out);
 });
