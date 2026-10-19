@@ -294,3 +294,31 @@
 .ai-getkey .w-btn { text-decoration: none; }
 .ai-detect { margin: -4px 0 0; color: var(--w-text-muted); }
 .ai-detect b { color: var(--w-text); font-weight: 600; }
+
+/* Study side: what a new note's side pane shows */
+.study-side-scroll { text-align: left; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.study-side-head { text-align: left; }
+.study-side-head h2 { margin: 0 0 4px; font-size: 20px; text-align: left; }
+.study-side-head p { margin: 0; font-size: 14px; text-align: left; }
+.study-side-pdf { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 16px; border-radius: var(--w-radius); border: 2px dashed var(--w-accent); background: var(--w-accent-soft); color: var(--w-text); font: inherit; cursor: pointer; }
+.study-side-pdf > span:nth-child(2) { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.study-side-pdf strong { font-size: 15px; }
+.study-side-pdf small { color: var(--w-text-muted); font-size: 12.5px; text-transform: none; letter-spacing: normal; font-weight: 400; }
+.study-side-pdf > svg { color: var(--w-accent); }
+.study-side-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: var(--w-surface); color: var(--w-accent); flex: none; }
+.study-side-recent { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.study-side-recent > span { width: 100%; }
+.study-side-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; border: 0; border-radius: 999px; padding: 6px 12px; background: var(--w-soft); color: var(--w-text); font: inherit; font-size: 13px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.study-side-chip:hover { background: var(--w-accent-soft); }
+.study-side-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.study-side-grid .w-action { width: 100%; }
+.study-side-tip { margin: 4px 0 0; }
+.study-side-tip code { font-size: 12px; padding: 1px 5px; border-radius: 6px; background: var(--w-soft); }
+
+/* Coach-mark tour */
+.tour { position: fixed; inset: 0; z-index: 200; }
+.tour-spot { position: fixed; border-radius: 14px; box-shadow: 0 0 0 9999px rgb(0 0 0 / 0.45), 0 0 0 3px var(--w-accent); pointer-events: none; transition: all 0.25s var(--w-ease); }
+.tour-card { position: fixed; padding: 16px 18px; border-radius: var(--w-radius); background: var(--w-surface); box-shadow: var(--w-shadow-lg); animation: w-pop 0.18s var(--w-ease); }
+.tour-card h3 { margin: 4px 0 6px; font-size: 16px; }
+.tour-card p { margin: 0 0 12px; font-size: 13.5px; line-height: 1.5; color: var(--w-text-muted); }
+.tour-actions { justify-content: flex-end; }
