@@ -148,33 +148,51 @@ export const HIGHLIGHT_COLORS = [
 ] as const;
 
 const COLOR_OPEN_BEFORE = /<(span|mark) style="(?:color|background): ?#[0-9a-fA-F]{3,8}">$/;
+const COLOR_CLOSE_AFTER = /^<\/(span|mark)>/;
 
 /**
- * Colour the selection's text (`<span style="color: …">`) or highlight it in a
- * colour (`<mark style="background: …">`). Picking again over already-coloured
- * text swaps the colour; `null` removes it.
+ * Colour the selection's text (`<span style="color:…">`) or highlight it in a
+ * colour (`<mark style="background:…">`). Colour and highlight stack, and
+ * picking again over already-coloured text swaps the colour; `null` removes it.
  */
 export function setColor(view: EditorView, kind: "text" | "highlight", color: string | null): boolean {
   if (color && !/^#[0-9a-fA-F]{3,8}$/.test(color)) return false;
   const { state } = view;
   const tag = kind === "text" ? "span" : "mark";
   const prop = kind === "text" ? "color" : "background";
+  // No space before the colour, so `#e03131` is never read as a #tag.
+  const openTag = color ? `<${tag} style="${prop}:${color}">` : "";
+  const closeTag = color ? `</${tag}>` : "";
   const tr = state.changeByRange((range) => {
     const line = state.doc.lineAt(range.from);
-    const open = COLOR_OPEN_BEFORE.exec(state.sliceDoc(line.from, range.from));
-    const close = `</${tag}>`;
-    const wrapped = open && open[1] === tag && state.sliceDoc(range.to, range.to + close.length) === close;
-    // No space before the colour, so `#e03131` is never read as a #tag.
-    const openTag = color ? `<${tag} style="${prop}:${color}">` : "";
-    const closeTag = color ? close : "";
-    if (wrapped) {
-      const openFrom = range.from - open[0].length;
+    // The colour tags hugging the selection, innermost first.
+    const opens: { tag: string; from: number; to: number }[] = [];
+    for (let before = state.sliceDoc(line.from, range.from), end = range.from; ; ) {
+      const m = COLOR_OPEN_BEFORE.exec(before);
+      if (!m) break;
+      opens.push({ tag: m[1]!, from: end - m[0].length, to: end });
+      before = before.slice(0, -m[0].length);
+      end -= m[0].length;
+    }
+    const closes: { tag: string; from: number; to: number }[] = [];
+    for (let after = state.sliceDoc(range.to, line.to), start = range.to; ; ) {
+      const m = COLOR_CLOSE_AFTER.exec(after);
+      if (!m) break;
+      closes.push({ tag: m[1]!, from: start, to: start + m[0].length });
+      after = after.slice(m[0].length);
+      start += m[0].length;
+    }
+    const k = opens.findIndex((o, i) => o.tag === tag && closes[i]?.tag === tag);
+    if (k >= 0) {
+      const o = opens[k]!;
+      const c = closes[k]!;
+      const shift = openTag.length - (o.to - o.from);
       return {
         changes: [
-          { from: openFrom, to: range.from, insert: openTag },
-          { from: range.to, to: range.to + close.length, insert: closeTag },
+          { from: o.from, to: o.to, insert: openTag },
+          { from: c.from, to: c.to, insert: closeTag },
         ],
-        range: EditorSelection.range(openFrom + openTag.length, range.to - open[0].length + openTag.length),
+        range: EditorSelection.range(range.from + shift, range.to + shift),
       };
     }
     if (!color || range.empty) return { range };

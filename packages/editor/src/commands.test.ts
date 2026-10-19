@@ -43,6 +43,17 @@ describe("setColor", () => {
     expect(v.state.doc.toString()).toBe('hi <mark style="background:#fff3a3">there</mark>');
   });
 
+  it("stacks a highlight on coloured text and swaps only the matching one", () => {
+    const v = fakeView("hi there", 3, 8);
+    setColor(v as never, "text", "#e03131");
+    setColor(v as never, "highlight", "#fff3a3");
+    expect(v.state.doc.toString()).toBe('hi <span style="color:#e03131"><mark style="background:#fff3a3">there</mark></span>');
+    setColor(v as never, "text", "#1c7ed6");
+    expect(v.state.doc.toString()).toBe('hi <span style="color:#1c7ed6"><mark style="background:#fff3a3">there</mark></span>');
+    setColor(v as never, "highlight", null);
+    expect(v.state.doc.toString()).toBe('hi <span style="color:#1c7ed6">there</span>');
+  });
+
   it("ignores anything that isn't a hex colour", () => {
     const v = fakeView("hi", 0, 2);
     expect(setColor(v as never, "text", "red;position:fixed")).toBe(false);

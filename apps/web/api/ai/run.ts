@@ -9,13 +9,15 @@ export const POST = handler(async (req) => {
   const tool = body.tool as AiTool;
   if (!tool || !Object.hasOwn(AI_TOOLS, tool)) throw new HttpError(400, "Unknown AI tool.");
   const text = String(body.text ?? "").trim();
-  if (!text) throw new HttpError(400, "There's no text to work with yet.");
+  // A plain question needs no note; every other tool works on some text.
+  if (!text && tool !== "ask" && tool !== "chat") throw new HttpError(400, "There's no text to work with yet.");
   if (text.length > MAX_INPUT_CHARS) throw new HttpError(413, "That's too much text at once. Select a smaller part of the note.");
-  const question = tool === "ask" ? String(body.question ?? "").trim().slice(0, 2000) : undefined;
-  if (tool === "ask" && !question) throw new HttpError(400, "Type a question first.");
+  const asking = tool === "ask" || tool === "chat";
+  const question = asking ? String(body.question ?? "").trim().slice(0, 2000) : undefined;
+  if (asking && !question) throw new HttpError(400, "Type a question first.");
 
   const target = await resolveKey(user.id);
   await takeQuota(user.id, target.mode);
-  const out = await runTool(target, tool, text, question);
+  const out = await runTool(target, tool === "ask" && !text ? "chat" : tool, text, question);
   return json(out);
 });
