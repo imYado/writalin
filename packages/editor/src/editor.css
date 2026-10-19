@@ -31,6 +31,8 @@
 .w-editor .cm-inline-code { font-family: var(--w-font-mono); font-size: 0.88em; background: var(--w-code-bg); border-radius: 6px; padding: 1px 5px; }
 .w-editor .cm-highlight { background: var(--w-highlight); border-radius: 3px; padding: 0 1px; }
 .w-editor .cm-colormark { border-radius: 3px; padding: 0 1px; color: #1d1d1f; }
+/* Coloured text keeps its colour inside a highlight. */
+.w-editor .cm-colortext .cm-colormark { color: inherit; }
 .w-editor .cm-link, .w-editor .cm-wikilink { color: var(--w-link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--w-link) 40%, transparent); text-underline-offset: 3px; cursor: pointer; }
 .w-editor .cm-wikilink-missing { color: var(--w-link-unresolved); text-decoration-style: dashed; }
 .w-editor .cm-tag { color: var(--w-tag); background: color-mix(in srgb, var(--w-tag) 12%, transparent); border-radius: 999px; padding: 1px 7px; font-size: 0.9em; }

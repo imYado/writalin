@@ -143,9 +143,10 @@ function activeLines(state: EditorState): Set<number> {
 const CALLOUT_RE = /^>\s*\[!([\w-]+)\]([+-]?)\s*(.*)$/;
 const WIKI_RE = /(!?)\[\[([^[\]|\n]+?)(\|[^[\]\n]*)?\]\]/g;
 const TAG_RE = /(^|[\s(,;])(#[\p{L}\p{N}_\-/]*[\p{L}_\-/][\p{L}\p{N}_\-/]*)/gu;
-const HIGHLIGHT_RE = /==([^=\n]+)==/g;
-/** Coloured text and coloured highlights, written by the colour menus. Only hex colours are styled. */
-const COLOR_RE = /<(span|mark) style="(color|background): ?(#[0-9a-fA-F]{3,8})">([^<\n]+)<\/\1>/g;
+/** `==text==`; a single `=` inside is fine (e.g. a colour tag's `style="…"`). */
+const HIGHLIGHT_RE = /==((?:[^=\n]|=(?!=))+)==/g;
+/** Opening and closing colour tags written by the colour menus. Only hex colours are styled. */
+const COLOR_TAG_RE = /<(span|mark) style="(color|background): ?(#[0-9a-fA-F]{3,8})">|<\/(span|mark)>/g;
 /** `Question :: Answer` cards (same rule as the vault's parser): not tasks, spaces around `::`. */
 const CARD_RE = /^(?![ \t]*[-*+][ \t]+\[)([ \t]*(?:[-*+][ \t]+)?)(.+?)([ \t]+::[ \t]+)(.+?)[ \t]*$/;
 
@@ -336,17 +337,30 @@ function build(view: EditorView): DecorationSet {
       else decos.push(Decoration.replace({ widget: new CardSeparator() }).range(sep, a));
       decos.push(Decoration.mark({ class: isActive(line.from) ? "cm-card-a cm-card-a-shown" : "cm-card-a" }).range(a, end));
     }
-    for (const m of text.matchAll(COLOR_RE)) {
-      const start = from + m.index;
-      if (inCode(start)) continue;
-      const end = start + m[0].length;
-      const innerFrom = end - m[4]!.length - `</${m[1]}>`.length;
-      const innerTo = innerFrom + m[4]!.length;
-      const style = m[2] === "color" ? `color: ${m[3]}` : `background-color: ${m[3]}`;
-      decos.push(Decoration.mark({ class: m[2] === "color" ? "cm-colortext" : "cm-colormark", attributes: { style } }).range(innerFrom, innerTo));
-      // The tags are long and noisy, so they stay hidden even while editing the line.
-      decos.push(hide.range(start, innerFrom));
-      decos.push(hide.range(innerTo, end));
+    // Colour tags can nest (a coloured highlight around red text), so pair them per line with a stack.
+    for (let pos = from; pos <= to; ) {
+      const line = state.doc.lineAt(pos);
+      pos = line.to + 1;
+      if (!line.text.includes("</") || inCode(line.from)) continue;
+      const open: { tag: string; prop: string; color: string; from: number; to: number }[] = [];
+      for (const m of line.text.matchAll(COLOR_TAG_RE)) {
+        const at = line.from + m.index;
+        if (m[1]) {
+          open.push({ tag: m[1], prop: m[2]!, color: m[3]!, from: at, to: at + m[0].length });
+          continue;
+        }
+        const top = open[open.length - 1];
+        if (!top || top.tag !== m[4]) continue;
+        open.pop();
+        const close = at + m[0].length;
+        if (at > top.to) {
+          const style = top.prop === "color" ? `color: ${top.color}` : `background-color: ${top.color}`;
+          decos.push(Decoration.mark({ class: top.prop === "color" ? "cm-colortext" : "cm-colormark", attributes: { style } }).range(top.to, at));
+        }
+        // The tags are long and noisy, so they stay hidden even while editing the line.
+        decos.push(hide.range(top.from, top.to));
+        decos.push(hide.range(at, close));
+      }
     }
     for (const m of text.matchAll(HIGHLIGHT_RE)) {
       const start = from + m.index;

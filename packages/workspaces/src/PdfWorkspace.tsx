@@ -3,7 +3,7 @@ import type { VaultPath } from "@writalin/shared";
 import { basename } from "@writalin/shared";
 import { pdfQuote } from "@writalin/vault";
 import { Icon, toast } from "@writalin/ui";
-import type { WorkspaceProps } from "./types";
+import type { AiSourceText, WorkspaceProps } from "./types";
 import { loadPdf, type PdfDoc } from "./pdf";
 
 interface Props extends WorkspaceProps {
@@ -41,7 +41,7 @@ export function formatPages(pages: number[]): string {
   return out.join(", ");
 }
 
-export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, quality, currentNote, askAi }: Props) {
+export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, quality, currentNote, askAi, registerAiSource }: Props) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -65,28 +65,24 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   }, [aiOpen]);
 
   const link = (p?: number) => `${path.replace(/ /g, "%20")}${p ? `#page=${p}` : ""}`;
-  /** Send the selection, or some pages, to the AI dock with a link back to the source. */
-  const runAi = async (tool: PdfAiTool, scope: AiScope) => {
-    if (!doc || !askAi) return;
-    setAiOpen(false);
-    if (!currentNote) toast("Open a note on the right to keep the answer.", { tone: "warn" });
+  /** Collect the selection, or some pages, with a link back to the source. */
+  const buildSource = async (scope: AiScope): Promise<AiSourceText | null> => {
+    if (!doc) return null;
     const name = basename(path);
     if (scope === "selection") {
-      if (!sel) return toast("Highlight some text in the PDF first.", { tone: "warn" });
-      askAi(tool, { text: sel.text, label: `your highlighted text on page ${sel.page} of “${name}”`, footer: `[source p.${sel.page}](${link(sel.page)})` });
-      window.getSelection()?.removeAllRanges();
-      return setSel(null);
+      if (!sel) return (toast("Highlight some text in the PDF first.", { tone: "warn" }), null);
+      return { text: sel.text, label: `your highlighted text on page ${sel.page} of “${name}”`, footer: `[source p.${sel.page}](${link(sel.page)})` };
     }
     const pages =
       scope === "page" ? [page]
       : scope === "all" ? Array.from({ length: doc.numPages }, (_, i) => i + 1)
       : [...(picked ?? [])].sort((a, b) => a - b);
-    if (!pages.length) return toast("Tick the pages you want first.", { tone: "warn" });
+    if (!pages.length) return (toast("Tick the pages you want first.", { tone: "warn" }), null);
     if (pages.length === 1) {
       const n = pages[0]!;
       const text = await doc.pageText(n);
-      if (!text.trim()) return toast("This page has no text to read. It may be a scanned image.", { tone: "warn" });
-      return askAi(tool, { text, label: `page ${n} of “${name}”`, footer: `[source p.${n}](${link(n)})` });
+      if (!text.trim()) return (toast("This page has no text to read. It may be a scanned image.", { tone: "warn" }), null);
+      return { text, label: `page ${n} of “${name}”`, footer: `[source p.${n}](${link(n)})` };
     }
     let text = "";
     const sent: number[] = [];
@@ -96,15 +92,28 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       sent.push(n);
     }
     text = text.slice(0, MAX_AI_CHARS).trim();
-    if (!text.replace(/\[Page \d+\]/g, "").trim()) return toast("These pages have no text to read. They may be scanned images.", { tone: "warn" });
+    if (!text.replace(/\[Page \d+\]/g, "").trim()) return (toast("These pages have no text to read. They may be scanned images.", { tone: "warn" }), null);
     const cut = sent.length < pages.length || text.length >= MAX_AI_CHARS;
     const whole = scope === "all" && !cut;
     const what = whole ? `all of “${name}”` : `pages ${formatPages(sent)} of “${name}”`;
-    askAi(tool, {
+    return {
       text,
       label: cut ? `${what} (the rest was too long to send at once)` : what,
       footer: whole ? `Source: [${name}](${link()})` : `Source: [${name}, pages ${formatPages(sent)}](${link(sent[0])})`,
-    });
+    };
+  };
+  /** Send the selection, or some pages, to the AI dock. */
+  const runAi = async (tool: PdfAiTool, scope: AiScope) => {
+    if (!doc || !askAi) return;
+    setAiOpen(false);
+    if (!currentNote) toast("Open a note on the right to keep the answer.", { tone: "warn" });
+    const source = await buildSource(scope);
+    if (!source) return;
+    askAi(tool, source);
+    if (scope === "selection") {
+      window.getSelection()?.removeAllRanges();
+      setSel(null);
+    }
   };
 
   const togglePick = (n: number) =>
@@ -120,6 +129,36 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     setPicked((cur) => cur ?? new Set([page]));
     setThumbs(true);
   };
+
+  // Offer this PDF to the AI dock, so it can work on it like the AI button here does.
+  const latest = useRef({ buildSource, startPicking, picked });
+  latest.current = { buildSource, startPicking, picked };
+  useEffect(() => {
+    if (!registerAiSource || !doc) return;
+    registerAiSource({
+      name: basename(path),
+      defaultScope: sel ? "selection" : "page",
+      scopes: [
+        { id: "page", label: `This page (${page})` },
+        { id: "all", label: `All pages (${doc.numPages})` },
+        { id: "pick", label: picked?.size ? `Chosen pages (${picked.size})` : "Choose pages…", hint: "Tick pages in the PDF" },
+        { id: "selection", label: "Highlighted text", disabled: !sel, hint: sel ? undefined : "Highlight text in the PDF first" },
+      ],
+      onScope: (scope) => {
+        if (scope === "pick" && !latest.current.picked?.size) latest.current.startPicking();
+      },
+      build: (scope) => {
+        const l = latest.current;
+        // Choosing pages starts with ticking them in the PDF.
+        if (scope === "pick" && !l.picked?.size) {
+          l.startPicking();
+          return Promise.resolve(null);
+        }
+        return l.buildSource(scope as AiScope);
+      },
+    });
+  }, [registerAiSource, doc, path, page, picked, sel]);
+  useEffect(() => () => registerAiSource?.(null), [registerAiSource]);
 
   useEffect(() => {
     let alive = true;

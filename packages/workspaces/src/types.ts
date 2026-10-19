@@ -1,6 +1,28 @@
 import type { Vault } from "@writalin/vault";
 import type { VaultPath } from "@writalin/shared";
 
+/** Text handed to the AI, with what it is and a link back to where it came from. */
+export interface AiSourceText {
+  text: string;
+  /** What the text is, for the "Using …" line. */
+  label: string;
+  /** Markdown added under the result when it goes into the note. */
+  footer?: string;
+}
+
+/** What the open workspace (e.g. a PDF) offers the AI dock to read. */
+export interface WorkspaceAiSource {
+  /** Shown on the "Use" choice, e.g. the PDF's file name. */
+  name: string;
+  /** Parts it can send, e.g. this page, all pages, chosen pages. */
+  scopes: { id: string; label: string; disabled?: boolean; hint?: string }[];
+  defaultScope: string;
+  /** A scope was picked in the dock, e.g. to start ticking pages. */
+  onScope?: (scope: string) => void;
+  /** Collect the text for a scope; null when there is nothing to send (it says why itself). */
+  build: (scope: string) => Promise<AiSourceText | null>;
+}
+
 /** What every left-pane workspace gets from the app. */
 export interface WorkspaceProps {
   vault: Vault;
@@ -17,5 +39,7 @@ export interface WorkspaceProps {
   flushNote?: () => Promise<void>;
   quality: "low" | "medium" | "high";
   /** Run an AI study tool on text from this workspace; the answer shows in the AI dock. */
-  askAi?: (tool: "summarize" | "flashcards" | "explain" | "quiz" | "mainpoint", source: { text: string; label: string; footer?: string }) => void;
+  askAi?: (tool: "summarize" | "flashcards" | "explain" | "quiz" | "mainpoint", source: AiSourceText) => void;
+  /** Offer this workspace's text to the AI dock while it is open; null takes it back. */
+  registerAiSource?: (source: WorkspaceAiSource | null) => void;
 }

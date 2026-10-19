@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, toast, type IconName } from "@writalin/ui";
 import { cardsFromText, formatCards, type Vault } from "@writalin/vault";
+import type { AiSourceText, WorkspaceAiSource } from "@writalin/workspaces";
 import { aiApi, ApiError, type Account, type AiState, type AiTool } from "../api";
 
 const TOOLS: { id: AiTool; label: string; desc: string; icon: IconName }[] = [
@@ -13,19 +14,17 @@ const TOOLS: { id: AiTool; label: string; desc: string; icon: IconName }[] = [
   { id: "whereWasI", label: "Where was I?", desc: "Recap and next step", icon: "clock" },
 ];
 
-export interface AiSource {
-  text: string;
-  /** What the text is, for the "Using …" line. */
-  label: string;
-  /** Markdown added under the result when it goes into the note, e.g. a link back to the PDF. */
-  footer?: string;
-}
+export type AiSource = AiSourceText;
 
 interface Props {
   vault: Vault;
   account: Account | null | undefined;
   /** The text to work on: the selection, or the note. `whereWasI` gets text up to the cursor. */
   getSource: (tool: AiTool) => AiSource | null;
+  /** What's open in the side pane (a PDF), offered as something else to read. */
+  workspace?: WorkspaceAiSource | null;
+  /** False when no note is open to put the answer in. */
+  canInsert: boolean;
   insert: (markdown: string) => void;
   onOpenSettings: () => void;
   /** Run a tool as soon as the panel can, e.g. picked from the right-click menu. */
@@ -35,7 +34,7 @@ interface Props {
 }
 
 /** The AI dock panel. Opt-in, signed-in only; the key is used on the server, never here. */
-export function AiPanel({ vault, account, getSource, insert, onOpenSettings, autoRun, onStudy }: Props) {
+export function AiPanel({ vault, account, getSource, workspace, canInsert, insert, onOpenSettings, autoRun, onStudy }: Props) {
   const [enabled, setEnabled] = useState(vault.settings.aiEnabled);
   const [state, setState] = useState<AiState | null>(null);
   const [busy, setBusy] = useState<AiTool | null>(null);
@@ -44,6 +43,10 @@ export function AiPanel({ vault, account, getSource, insert, onOpenSettings, aut
   const [pinned, setPinned] = useState<AiSource | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
+  /** Read the note, or what's open in the side pane. An empty note starts on the side pane. */
+  const [use, setUse] = useState<"note" | "workspace">(() => (workspace && !getSource("summarize")?.text.trim() ? "workspace" : "note"));
+  const [scope, setScope] = useState(workspace?.defaultScope ?? "page");
+  const [asked, setAsked] = useState("");
 
   useEffect(() => {
     if (account && enabled) void aiApi.state().then(setState).catch(() => {});
@@ -85,15 +88,31 @@ export function AiPanel({ vault, account, getSource, insert, onOpenSettings, aut
     );
   }
 
+  const fromWorkspace = use === "workspace" && !!workspace && !pinned;
   const run = async (tool: AiTool, from?: AiSource) => {
-    const src = from ?? pinned ?? getSource(tool);
-    if (!src?.text.trim()) return setError("Open a note with some text first, or select the part you want help with.");
-    setBusy(tool);
     setError(null);
+    let src = from ?? pinned ?? null;
+    if (!src && fromWorkspace) {
+      setBusy(tool);
+      src = await workspace!.build(scope).catch(() => null);
+      if (!src) return setBusy(null);
+    }
+    src ??= getSource(tool);
+    // A question works on its own; the tools need some text.
+    const text = src?.text.trim() ? src.text : "";
+    if (!text && tool !== "ask") {
+      setBusy(null);
+      return setError("Open a note with some text, or a PDF on the side. You can also just ask a question above.");
+    }
+    setBusy(tool);
     setResult(null);
     try {
-      const r = await aiApi.run(tool, src.text, tool === "ask" ? question : undefined);
-      setResult({ tool, text: r.text, footer: src.footer });
+      const r = await aiApi.run(tool, text, tool === "ask" ? question : undefined);
+      setResult({ tool, text: r.text, footer: text ? src?.footer : undefined });
+      if (tool === "ask") {
+        setAsked(question);
+        setQuestion("");
+      }
       void aiApi.state().then(setState).catch(() => {});
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong. Try again.");
@@ -104,21 +123,67 @@ export function AiPanel({ vault, account, getSource, insert, onOpenSettings, aut
 
   runRef.current = run;
 
-  const src = pinned ?? getSource("summarize");
+  const noteSrc = getSource("summarize");
+  const scopeLabel = workspace?.scopes.find((x) => x.id === scope)?.label;
+  const using = pinned
+    ? `Using ${pinned.label}`
+    : fromWorkspace
+      ? `Using ${scopeLabel?.replace(/…$/, "").toLowerCase() ?? "it"} of “${workspace!.name}”`
+      : noteSrc?.text.trim()
+        ? `Using ${noteSrc.label}`
+        : "No note text yet. Questions still work.";
   return (
     <div className="ai-panel">
       <div className="ai-head">
         <h3>Study helper</h3>
-        <span className="w-muted w-small ai-source">
-          {src ? `Using ${src.label}` : "Open a note to begin"}
-          {pinned && <button className="ai-link" onClick={() => setPinned(null)}>Use the note instead</button>}
-        </span>
       </div>
 
       <form className="ai-ask" onSubmit={(e) => { e.preventDefault(); void run("ask"); }}>
-        <input className="w-input" placeholder="Ask about this note…" value={question} onChange={(e) => setQuestion(e.target.value)} aria-label="Ask a question about this note" />
-        <button className="w-btn w-btn-primary w-btn-small" disabled={!question.trim() || busy != null}>Ask</button>
+        <input
+          className="w-input"
+          autoFocus={matchMedia("(pointer: fine)").matches}
+          placeholder={fromWorkspace || pinned ? "Ask about this PDF, or anything…" : "Ask AI anything…"}
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          aria-label="Ask AI a question"
+        />
+        <button className="w-btn w-btn-primary w-btn-small" disabled={!question.trim() || busy != null}>{busy === "ask" ? "…" : "Ask"}</button>
       </form>
+
+      {workspace && !pinned && (
+        <div className="ai-use" role="group" aria-label="What AI reads">
+          <span className="w-small w-muted">Read:</span>
+          <button className="w-chip" aria-pressed={use === "note"} onClick={() => setUse("note")}>
+            <Icon name="notes" size={13} /> This note
+          </button>
+          <button className="w-chip" aria-pressed={use === "workspace"} onClick={() => setUse("workspace")} title={workspace.name}>
+            <Icon name="pdf" size={13} /> <span className="ai-use-name">{workspace.name}</span>
+          </button>
+        </div>
+      )}
+      {fromWorkspace && (
+        <div className="ai-use ai-scopes" role="group" aria-label="Which part">
+          {workspace!.scopes.map((x) => (
+            <button
+              key={x.id}
+              className="w-chip"
+              aria-pressed={scope === x.id}
+              disabled={x.disabled}
+              title={x.hint}
+              onClick={() => {
+                setScope(x.id);
+                workspace!.onScope?.(x.id);
+              }}
+            >
+              {x.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <span className="w-muted w-small ai-source">
+        {using}
+        {pinned && <button className="ai-link" onClick={() => setPinned(null)}>{workspace ? "Choose again" : "Use the note instead"}</button>}
+      </span>
 
       <div className="w-action-grid">
         {TOOLS.map((t) => (
@@ -141,6 +206,7 @@ export function AiPanel({ vault, account, getSource, insert, onOpenSettings, aut
         const full = result.footer ? `${markdown}\n\n${result.footer}` : markdown;
         return (
           <div className="ai-result">
+            {result.tool === "ask" && asked && <p className="ai-asked w-small w-muted">You asked: {asked}</p>}
             {cards.length ? (
               <ul className="ai-cards" aria-label={`${cards.length} flashcards`}>
                 {cards.map((c, i) => <li key={i}><b>{c.question}</b><span>{c.answer}</span></li>)}
@@ -149,9 +215,9 @@ export function AiPanel({ vault, account, getSource, insert, onOpenSettings, aut
               <div className="ai-result-text">{result.text}</div>
             )}
             <div className="w-row">
-              <button className="w-btn w-btn-primary w-btn-small" onClick={() => { insert(full); toast(cards.length ? `Added ${cards.length} flashcards to your note.` : "Added to your note."); setResult(null); }}>
+              {canInsert && <button className="w-btn w-btn-primary w-btn-small" onClick={() => { insert(full); toast(cards.length ? `Added ${cards.length} flashcards to your note.` : "Added to your note."); setResult(null); }}>
                 <Icon name="plus" size={14} /> {cards.length ? "Add cards to note" : "Insert into note"}
-              </button>
+              </button>}
               {cards.length > 0 && (
                 <button className="w-btn w-btn-small" onClick={() => onStudy(cards)}>
                   <Icon name="play" size={14} /> Study now
