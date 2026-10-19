@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEvent } from "react";
 import { NoteEditor, type EditorHost, type NoteEditorHandle, type OutlineItem } from "@writalin/editor";
 import { ConflictError, lineCount, splitFrontmatter, type Vault, type Backlink } from "@writalin/vault";
 import { debounce, dirname, joinPath, noteName, sanitizeFileName, type VaultPath } from "@writalin/shared";
@@ -23,7 +23,10 @@ interface Props {
   onRenamed: (to: VaultPath) => void;
   onOpen: (path: VaultPath) => void;
   onTag: (tag: string) => void;
-  onDelete: () => void;
+  /** The ⋯ button: export and delete live in a menu under it. */
+  onMore: (anchor: DOMRect) => void;
+  /** Right-click inside the text. */
+  onContextMenu: (e: MouseEvent) => void;
 }
 
 const cursorKey = (vault: string, path: string) => `writalin.cursor:${vault}:${path}`;
@@ -215,8 +218,8 @@ export const NotePane = forwardRef<NotePaneHandle, Props>(function NotePane(p, r
             <span className={`note-save note-save-${saveState}`} aria-live="polite">
               {saveState === "saving" ? "Saving…" : saveState === "error" ? "Not saved" : "Saved"}
             </span>
-            <button className="note-delete" onClick={p.onDelete} title="Delete this note" aria-label="Delete this note">
-              <Icon name="trash" size={14} />
+            <button className="w-icon-btn note-more" onClick={(e) => p.onMore(e.currentTarget.getBoundingClientRect())} title="More" aria-label="More for this note" aria-haspopup="menu">
+              <Icon name="more" size={16} />
             </button>
           </div>
         </div>
@@ -239,6 +242,7 @@ export const NotePane = forwardRef<NotePaneHandle, Props>(function NotePane(p, r
           </div>
         )}
         {loaded && loaded.path === path && (
+          <div className="note-editor" onContextMenu={p.onContextMenu}>
           <NoteEditor
             ref={editor}
             key={loaded.nonce}
@@ -257,6 +261,7 @@ export const NotePane = forwardRef<NotePaneHandle, Props>(function NotePane(p, r
               save(doc, path);
             }}
           />
+          </div>
         )}
         {backlinks.length > 0 && (
           <section className="backlinks" aria-label="Linked from">

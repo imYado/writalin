@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { contributionGrid, createdDay, notesCreatedByDay, type ActivityMetric, type ContributionCell, type ContributionSummary, type Vault } from "@writalin/vault";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { activityYears, contributionGrid, createdDay, notesCreatedByDay, type ActivityMetric, type ContributionCell, type ContributionSummary, type Vault } from "@writalin/vault";
 import { parseIsoDate } from "@writalin/shared";
 import type { WorkspaceProps } from "./types";
 
@@ -9,12 +9,13 @@ const METRICS: { id: ActivityMetric; label: string }[] = [
   { id: "notes", label: "New notes" },
 ];
 
-export function useContributions(vault: Vault, version: number, weekCount: number, metric: ActivityMetric): ContributionSummary {
+/** `year` shows that calendar year; without it, the weeks up to today. */
+export function useContributions(vault: Vault, version: number, weekCount: number, metric: ActivityMetric, year?: number): ContributionSummary {
   // `version` changes on every save; activity changes ride along with it.
   return useMemo(
-    () => contributionGrid(vault.activity, notesCreatedByDay(vault.notes.values()), { weekCount, metric }),
+    () => contributionGrid(vault.activity, notesCreatedByDay(vault.notes.values()), { weekCount, metric, end: year ? new Date(year, 11, 31) : undefined }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [vault, version, weekCount, metric],
+    [vault, version, weekCount, metric, year],
   );
 }
 
@@ -33,16 +34,25 @@ function cellLabel(c: ContributionCell): string {
 /** GitHub-style contribution boxes: one square per day, darker = more writing. */
 export function ContributionGraph({ summary, onPick }: { summary: ContributionSummary; onPick?: (date: string) => void }) {
   const [hover, setHover] = useState<ContributionCell | null>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  // On narrow screens start at the newest weeks, like GitHub.
+  useEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [summary]);
   const months: { col: number; label: string }[] = [];
   summary.weeks.forEach((w, i) => {
     const first = w[0]!;
     const d = parseIsoDate(first.date)!;
     const prev = i > 0 ? parseIsoDate(summary.weeks[i - 1]![0]!.date)! : null;
-    if (!prev || prev.getMonth() !== d.getMonth()) months.push({ col: i, label: d.toLocaleDateString(undefined, { month: "short" }) });
+    if (prev && prev.getMonth() === d.getMonth()) return;
+    // A month that starts right after the first column would crowd its label.
+    if (months.length && i - months[months.length - 1]!.col < 3) months.pop();
+    months.push({ col: i, label: d.toLocaleDateString(undefined, { month: "short" }) });
   });
   return (
     <div className="contrib">
-      <div className="contrib-scroll">
+      <div className="contrib-scroll" ref={scroller}>
         <div className="contrib-grid" style={{ gridTemplateColumns: `auto repeat(${summary.weeks.length}, minmax(var(--contrib-cell), 1fr))`, minWidth: summary.weeks.length * 13 + 32 }} role="grid" aria-label="Writing activity">
           <span />
           {summary.weeks.map((_, i) => {
@@ -55,7 +65,7 @@ export function ContributionGraph({ summary, onPick }: { summary: ContributionSu
         </div>
       </div>
       <div className="contrib-foot">
-        <span className="contrib-hint" aria-live="polite">{hover ? cellLabel(hover) : "Hover a square to see that day."}</span>
+        <span className="contrib-hint" aria-live="polite">{hover ? cellLabel(hover) : "Point at a square to see that day."}</span>
         <span className="contrib-legend" aria-hidden="true">
           Less
           {[0, 1, 2, 3, 4].map((l) => <i key={l} className={`contrib-cell l${l}`} />)}
@@ -97,17 +107,23 @@ function Row({ row, summary, onHover, onPick }: {
   );
 }
 
-/** The Activity zone: contribution boxes, streaks and totals. */
+/** The Activity zone: contribution boxes for the past year or any earlier year, with streaks and totals. */
 export function ActivityWorkspace({ vault, version, openNote }: WorkspaceProps) {
   const [metric, setMetric] = useState<ActivityMetric>("both");
+  const [year, setYear] = useState<number | undefined>();
   const [picked, setPicked] = useState<string | null>(null);
-  const summary = useContributions(vault, version, 53, metric);
+  const summary = useContributions(vault, version, 53, metric, year);
+  const thisYear = new Date().getFullYear();
+  const years = useMemo(
+    () => [...new Set([thisYear, thisYear - 1, ...activityYears(vault.activity, notesCreatedByDay(vault.notes.values()))])].filter((y) => y <= thisYear).sort((a, b) => b - a),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [vault, version, thisYear],
+  );
   const pickedNotes = useMemo(
     () => (picked ? [...vault.notes.values()].filter((n) => createdDay(n) === picked) : []),
     [vault, version, picked],
   );
-  const week = summary.weeks.slice(-1)[0]!;
-  const weekWords = week.reduce((n, c) => n + c.words, 0);
+  const span = year ? String(year) : "past year";
 
   return (
     <div className="ws ws-activity">
@@ -115,25 +131,35 @@ export function ActivityWorkspace({ vault, version, openNote }: WorkspaceProps) 
         <header className="zone-head">
           <div>
             <h1>Activity</h1>
-            <p className="w-muted">How much you wrote and how many notes you started, day by day.</p>
-          </div>
-          <div className="w-row" role="group" aria-label="What to count">
-            {METRICS.map((m) => (
-              <button key={m.id} className="w-chip" aria-pressed={metric === m.id} onClick={() => setMetric(m.id)}>{m.label}</button>
-            ))}
+            <p className="w-muted">What you wrote, day by day.</p>
           </div>
         </header>
 
         <div className="stat-row">
-          <Stat label="Current streak" value={`${summary.currentStreak} day${summary.currentStreak === 1 ? "" : "s"}`} accent />
+          {year ? (
+            <Stat label="Active days" value={fmt(summary.activeDays)} accent />
+          ) : (
+            <Stat label="Current streak" value={`${summary.currentStreak} day${summary.currentStreak === 1 ? "" : "s"}`} accent />
+          )}
           <Stat label="Longest streak" value={`${summary.longestStreak} day${summary.longestStreak === 1 ? "" : "s"}`} />
-          <Stat label="Words this year" value={fmt(summary.totalWords)} />
-          <Stat label="Notes this year" value={fmt(summary.totalNotes)} />
-          <Stat label="Words this week" value={fmt(weekWords)} />
-          <Stat label="Active days" value={fmt(summary.activeDays)} />
+          <Stat label={`Words, ${span}`} value={fmt(summary.totalWords)} />
+          <Stat label={`New notes, ${span}`} value={fmt(summary.totalNotes)} />
         </div>
 
         <section className="zone-card">
+          <div className="activity-controls">
+            <div className="w-row" role="group" aria-label="Which year">
+              <button className="w-chip" aria-pressed={year == null} onClick={() => setYear(undefined)}>Past year</button>
+              {years.map((y) => (
+                <button key={y} className="w-chip" aria-pressed={year === y} onClick={() => setYear(y)}>{y}</button>
+              ))}
+            </div>
+            <div className="w-row" role="group" aria-label="What to count">
+              {METRICS.map((m) => (
+                <button key={m.id} className="w-chip w-chip-quiet" aria-pressed={metric === m.id} onClick={() => setMetric(m.id)}>{m.label}</button>
+              ))}
+            </div>
+          </div>
           <ContributionGraph summary={summary} onPick={setPicked} />
         </section>
 
@@ -152,7 +178,6 @@ export function ActivityWorkspace({ vault, version, openNote }: WorkspaceProps) 
             )}
           </section>
         )}
-        <p className="w-muted w-small">Word counts start from when you began using this version of Writalin. New notes count from each note's “created” date.</p>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon, toast, type IconName } from "@writalin/ui";
 import type { Vault } from "@writalin/vault";
 import { aiApi, ApiError, type Account, type AiState, type AiTool } from "../api";
@@ -26,10 +26,12 @@ interface Props {
   getSource: (tool: AiTool) => AiSource | null;
   insert: (markdown: string) => void;
   onOpenSettings: () => void;
+  /** Run a tool as soon as the panel can, e.g. picked from the right-click menu. */
+  autoRun?: { tool: AiTool; nonce: number };
 }
 
 /** The AI dock panel. Opt-in, signed-in only; the key is used on the server, never here. */
-export function AiPanel({ vault, account, getSource, insert, onOpenSettings }: Props) {
+export function AiPanel({ vault, account, getSource, insert, onOpenSettings, autoRun }: Props) {
   const [enabled, setEnabled] = useState(vault.settings.aiEnabled);
   const [state, setState] = useState<AiState | null>(null);
   const [busy, setBusy] = useState<AiTool | null>(null);
@@ -40,6 +42,13 @@ export function AiPanel({ vault, account, getSource, insert, onOpenSettings }: P
   useEffect(() => {
     if (account && enabled) void aiApi.state().then(setState).catch(() => {});
   }, [account, enabled]);
+  const runRef = useRef<(tool: AiTool) => Promise<void>>(undefined);
+  const ran = useRef(0);
+  useEffect(() => {
+    if (!autoRun || ran.current === autoRun.nonce || !account || !enabled) return;
+    ran.current = autoRun.nonce;
+    void runRef.current?.(autoRun.tool);
+  }, [autoRun, account, enabled]);
 
   if (account === undefined) return <p className="w-muted">Checking your account…</p>;
   if (account === null) {
@@ -85,6 +94,8 @@ export function AiPanel({ vault, account, getSource, insert, onOpenSettings }: P
       setBusy(null);
     }
   };
+
+  runRef.current = run;
 
   const src = getSource("summarize");
   return (

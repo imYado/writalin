@@ -45,6 +45,7 @@ const paths = {
   moon: "M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z",
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
   bell: "M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 21h4",
+  more: "M4.5 12a1 1 0 1 0 2 0a1 1 0 1 0-2 0M11 12a1 1 0 1 0 2 0a1 1 0 1 0-2 0M17.5 12a1 1 0 1 0 2 0a1 1 0 1 0-2 0",
 } as const;
 
 export type IconName = keyof typeof paths;
