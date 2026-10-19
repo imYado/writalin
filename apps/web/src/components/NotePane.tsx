@@ -6,7 +6,8 @@ import { Icon, toast } from "@writalin/ui";
 
 export interface NotePaneHandle {
   editor: NoteEditorHandle | null;
-  flush(): void;
+  /** Save now; resolves once the file is written. */
+  flush(): Promise<void>;
 }
 
 interface Props {
@@ -22,6 +23,7 @@ interface Props {
   onRenamed: (to: VaultPath) => void;
   onOpen: (path: VaultPath) => void;
   onTag: (tag: string) => void;
+  onDelete: () => void;
 }
 
 const cursorKey = (vault: string, path: string) => `writalin.cursor:${vault}:${path}`;
@@ -39,6 +41,8 @@ export const NotePane = forwardRef<NotePaneHandle, Props>(function NotePane(p, r
   const mtime = useRef(0);
   const dirty = useRef(false);
   const latest = useRef("");
+  /** The save in flight, so our own write isn't mistaken for someone else's. */
+  const saving = useRef<Promise<unknown> | null>(null);
   /** Lines taken by frontmatter: task line numbers count them, the editor doesn't show them. */
   const fmLines = useRef(0);
 
@@ -61,17 +65,23 @@ export const NotePane = forwardRef<NotePaneHandle, Props>(function NotePane(p, r
 
   const save = useMemo(
     () =>
-      debounce(async (body: string, target: string) => {
+      debounce((body: string, target: string) => {
         setSaveState("saving");
-        try {
-          const s = await vault.writeBody(target, body, { expectedMtime: mtime.current });
-          mtime.current = s.mtime;
-          dirty.current = false;
-          setSaveState("saved");
-        } catch (e) {
-          if (e instanceof ConflictError) setConflict(e);
-          setSaveState("error");
-        }
+        const run = (async () => {
+          try {
+            const s = await vault.writeBody(target, body, { expectedMtime: mtime.current });
+            mtime.current = s.mtime;
+            dirty.current = false;
+            setSaveState("saved");
+          } catch (e) {
+            if (e instanceof ConflictError) setConflict(e);
+            setSaveState("error");
+          }
+        })();
+        saving.current = run;
+        void run.finally(() => {
+          if (saving.current === run) saving.current = null;
+        });
       }, 600),
     [vault],
   );
@@ -96,14 +106,15 @@ export const NotePane = forwardRef<NotePaneHandle, Props>(function NotePane(p, r
     };
   }, [save]);
 
-  // Another app (Obsidian, the extension, sync) changed this note while it's open.
+  // Something else changed this note while it's open: another app, sync, or
+  // a task ticked in the side pane. Reload it unless there's unsaved typing.
   useEffect(
     () =>
       vault.events.on((e) => {
-        if (e.type === "changed" && e.external && e.path === path) {
-          if (!dirty.current) void load();
-          else setConflict(new ConflictError(path, "", 0));
-        }
+        if (e.type !== "changed" || e.path !== path || saving.current) return;
+        if (!e.external && vault.files.get(path)?.mtime === mtime.current) return;
+        if (!dirty.current) void load();
+        else setConflict(new ConflictError(path, "", 0));
       }),
     [vault, path, load],
   );
@@ -138,7 +149,19 @@ export const NotePane = forwardRef<NotePaneHandle, Props>(function NotePane(p, r
     });
   }, [p.jump?.nonce, loaded?.nonce]);
 
-  useImperativeHandle(ref, () => ({ get editor() { return editor.current; }, flush: () => save.flush() }), [save]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      get editor() {
+        return editor.current;
+      },
+      flush: async () => {
+        save.flush();
+        await saving.current;
+      },
+    }),
+    [save],
+  );
 
   const rename = async () => {
     const clean = sanitizeFileName(title);
@@ -192,6 +215,9 @@ export const NotePane = forwardRef<NotePaneHandle, Props>(function NotePane(p, r
             <span className={`note-save note-save-${saveState}`} aria-live="polite">
               {saveState === "saving" ? "Saving…" : saveState === "error" ? "Not saved" : "Saved"}
             </span>
+            <button className="note-delete" onClick={p.onDelete} title="Delete this note" aria-label="Delete this note">
+              <Icon name="trash" size={14} />
+            </button>
           </div>
         </div>
         {conflict && (

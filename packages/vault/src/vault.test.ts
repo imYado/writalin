@@ -26,6 +26,32 @@ describe("Vault", () => {
     expect(ctx[0]!.context).toBe("Back to [[A]]");
   });
 
+  it("keeps reminders, vault tasks and scratches apart, links reminders both ways, and deletes tasks", async () => {
+    const { vault } = await makeVault({
+      "Reminders.md": "- [ ] Essay due 📅 2026-10-20 ^r-abc123\n- [ ] Quiz 📅 2026-10-22\n",
+      "Tasks.md": "- [ ] Buy pens\n",
+      "Scratch/Scratch 1.md": "idea",
+      "Essay.md": "Plan for [[Reminders#^r-abc123|Essay due]]\n- [ ] Outline\n",
+    });
+    const [essay, quiz] = vault.reminders();
+    expect(essay!.blockId).toBe("r-abc123");
+    expect(essay!.text).toBe("Essay due");
+    expect(vault.reminderBacklinks("r-abc123")).toEqual(["Essay.md"]);
+    expect(vault.vaultTasks().map((t) => t.text)).toEqual(["Buy pens"]);
+    expect(vault.recentNotes().map((n) => n.path)).toEqual(["Essay.md"]);
+    expect(vault.scratches().map((n) => n.path)).toEqual(["Scratch/Scratch 1.md"]);
+
+    const id = await vault.ensureBlockId(quiz!);
+    expect((await vault.read("Reminders.md")).text).toContain(`Quiz 📅 2026-10-22 ^${id}`);
+    await vault.deleteTask(vault.reminders()[0]!);
+    expect(vault.reminders().map((t) => t.text)).toEqual(["Quiz"]);
+
+    await vault.appendTo("Tasks.md", "- [ ] Return book");
+    expect(vault.vaultTasks().map((t) => t.text)).toEqual(["Buy pens", "Return book"]);
+    const scratch = await vault.createScratch();
+    expect(scratch.startsWith("Scratch/Scratch ")).toBe(true);
+  });
+
   it("prefers a note in the same folder when names clash", async () => {
     const { vault } = await makeVault({ "x/Note.md": "", "y/Note.md": "", "y/Here.md": "[[Note]]" });
     expect(vault.resolve("Note", "y/Here.md")).toBe("y/Note.md");

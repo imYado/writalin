@@ -2,6 +2,7 @@ import { syntaxTree } from "@codemirror/language";
 import type { EditorState, Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { editorHost } from "./host";
+import { parseMediaLine } from "./media";
 
 /**
  * Obsidian-style live preview: Markdown stays the document, but syntax marks
@@ -290,11 +291,14 @@ function build(view: EditorView): DecorationSet {
       const [target, heading] = targetFull.split("#") as [string, string | undefined];
       const alias = m[3]?.slice(1);
       if (embed) {
+        // Images on a line of their own are blocks (see media.ts).
+        if (parseMediaLine(state.doc.lineAt(start).text)) continue;
         if (!isActive(start)) decos.push(Decoration.replace({ widget: new EmbedWidget(target, alias ?? "", false) }).range(start, end));
         continue;
       }
       const exists = !host || !target || host.linkExists(target);
-      const attrs = { class: exists ? "cm-wikilink" : "cm-wikilink cm-wikilink-missing", attributes: { "data-target": target, "data-heading": heading ?? "" } };
+      const reminder = /^reminders$/i.test(target) && heading?.startsWith("^");
+      const attrs = { class: `cm-wikilink${exists ? "" : " cm-wikilink-missing"}${reminder ? " cm-reminder-link" : ""}`, attributes: { "data-target": target, "data-heading": heading ?? "" } };
       if (isActive(start)) {
         decos.push(Decoration.mark(attrs).range(start, end));
       } else {

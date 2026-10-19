@@ -18,7 +18,8 @@ const FIELDS = {
 const DATE_FIELD_RE = /\s*(📅|⏳|🛫|✅|➕|❌)️?\s*(\d{4}-\d{2}-\d{2})/gu;
 const TIME_RE = /\s*⏰️?\s*(\d{1,2}:\d{2})/u;
 const PRIORITY_RE = /\s*(🔺|⏫|🔼|🔽|⏬)️?/gu;
-const RECUR_RE = /\s*🔁️?\s*[^📅⏳🛫✅➕❌⏰#\[]*/u;
+const RECUR_RE = /\s*🔁️?\s*[^📅⏳🛫✅➕❌⏰#\[^]*/u;
+const BLOCK_ID_RE = /\s+\^([A-Za-z0-9-]+)\s*$/;
 
 export function parseTaskLine(line: string, path: VaultPath, lineNo: number): Task | null {
   const m = TASK_LINE_RE.exec(line);
@@ -43,9 +44,12 @@ export function parseTaskLine(line: string, path: VaultPath, lineNo: number): Ta
       case FIELDS.doneDate: task.doneDate = date; break;
     }
   }
+  const block = BLOCK_ID_RE.exec(content);
+  if (block) task.blockId = block[1]!;
   const time = TIME_RE.exec(content);
   if (time) task.time = time[1]!.padStart(5, "0");
   task.text = content
+    .replace(BLOCK_ID_RE, "")
     .replace(DATE_FIELD_RE, "")
     .replace(TIME_RE, "")
     .replace(PRIORITY_RE, "")
@@ -95,6 +99,13 @@ export interface NewTask {
   time?: string;
   tags?: string[];
   link?: string;
+  /** Block id so notes can link to this line. */
+  id?: string;
+}
+
+/** A short random block id, e.g. `r-k3x9q2`. */
+export function newBlockId(prefix = "r"): string {
+  return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export function formatTaskLine(t: NewTask): string {
@@ -103,5 +114,6 @@ export function formatTaskLine(t: NewTask): string {
   if (t.time) s += ` ⏰ ${t.time}`;
   for (const tag of t.tags ?? []) s += ` #${tag.replace(/^#/, "")}`;
   if (t.link) s += ` [[${t.link}]]`;
+  if (t.id) s += ` ^${t.id}`;
   return s;
 }

@@ -106,3 +106,37 @@
 .w-editor .cm-table-bar button { border: 0; background: transparent; color: var(--w-text-muted); font-size: 12px; padding: 4px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
 .w-editor .cm-table-bar button:hover { background: var(--w-soft); color: var(--w-text); }
 .w-editor .cm-table-source { font-family: var(--w-font-mono); font-size: 0.86em; }
+
+/* Images and drawings on their own line: resize, move, draw. */
+.w-editor .cm-media { position: relative; margin: 10px 0; padding-top: 38px; break-inside: avoid; }
+.w-editor .cm-media-frame { position: relative; max-width: 100%; width: fit-content; border-radius: 16px; transition: box-shadow var(--w-anim); }
+.w-editor .cm-media-img { display: block; width: 100%; max-width: 100%; border-radius: 16px; }
+.w-editor .cm-drawing .cm-media-frame { width: 100%; background: #fbfaf7; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--w-text) 8%, transparent); }
+.w-editor .cm-drawing .cm-media-img { width: 100%; }
+.w-editor .cm-media:hover .cm-media-frame, .w-editor .cm-media:focus-within .cm-media-frame { box-shadow: 0 0 0 3px var(--w-accent-soft); }
+.w-editor .cm-media-resize { position: absolute; right: -6px; bottom: -6px; width: 18px; height: 18px; border-radius: 50%; background: var(--w-accent); box-shadow: 0 0 0 3px var(--w-surface); cursor: nwse-resize; opacity: 0; transition: opacity var(--w-anim), transform var(--w-anim); touch-action: none; }
+.w-editor .cm-media:hover .cm-media-resize { opacity: 1; }
+.w-editor .cm-media-resize:hover { transform: scale(1.15); }
+.w-editor .cm-media-bar, .w-editor .cm-drawing-tools { position: absolute; top: 0; left: 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-family: var(--w-font); font-size: 12px; line-height: 1; }
+.w-editor .cm-media-bar { opacity: 0; transition: opacity var(--w-anim); }
+.w-editor .cm-media:hover .cm-media-bar, .w-editor .cm-media:focus-within .cm-media-bar { opacity: 1; }
+.w-editor .cm-media-grip { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 999px; background: var(--w-soft); color: var(--w-text-muted); cursor: grab; touch-action: none; font-size: 14px; }
+.w-editor .cm-media-grip:active { cursor: grabbing; }
+.w-editor .cm-media-btn { border: 0; background: var(--w-soft); color: var(--w-text); border-radius: 999px; padding: 7px 11px; cursor: pointer; font: inherit; transition: background var(--w-anim), color var(--w-anim); }
+.w-editor .cm-media-btn:hover { background: var(--w-accent-soft); }
+.w-editor .cm-media-btn[aria-pressed="true"] { background: var(--w-accent); color: var(--w-accent-text); }
+.w-editor .cm-media-delete:hover { background: color-mix(in srgb, var(--w-danger) 16%, var(--w-surface)); color: var(--w-danger); }
+.w-editor .cm-media-done { background: var(--w-accent); color: var(--w-accent-text); }
+.w-editor .cm-media-moving { opacity: 0.45; }
+.w-editor .cm-media-drop { position: absolute; left: 0; right: 0; height: 4px; border-radius: 4px; background: var(--w-accent); pointer-events: none; z-index: 5; }
+.w-editor .cm-drawing-editing { padding-top: 0; }
+.w-editor .cm-drawing-editing .cm-drawing-tools { position: static; margin-bottom: 10px; }
+.w-editor .cm-drawing-editing .cm-media-bar { display: none; }
+.w-editor .cm-drawing-editing .cm-media-frame { box-shadow: 0 0 0 3px var(--w-accent); }
+.w-editor .cm-drawing-tools { padding: 2px; }
+.w-editor .cm-drawing-canvas { display: block; width: 100%; border-radius: 16px; cursor: crosshair; touch-action: none; }
+.w-editor .cm-drawing-swatches, .w-editor .cm-drawing-sizes { display: inline-flex; gap: 4px; padding: 0 4px; }
+.w-editor .cm-drawing-swatch { width: 24px; height: 24px; padding: 0; background: var(--swatch); }
+.w-editor .cm-drawing-swatch:hover { background: var(--swatch); transform: scale(1.1); }
+.w-editor .cm-drawing-swatch[aria-pressed="true"] { background: var(--swatch); box-shadow: 0 0 0 2px var(--w-surface), 0 0 0 4px var(--swatch); }
+.w-editor .cm-reminder-link::before { content: "⏰ "; text-decoration: none; display: inline-block; }
