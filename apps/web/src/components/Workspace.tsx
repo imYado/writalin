@@ -94,6 +94,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const insertImageInput = useRef<HTMLInputElement>(null);
+  const pdfInput = useRef<HTMLInputElement>(null);
 
   // ----- settings, theme, layout persistence -----
   useEffect(() => vault.events.on((e) => e.type === "settings" && setSettings(e.settings)), [vault]);
@@ -318,10 +319,12 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   }, [openScratch, newNote, focusMode, goZone]);
 
   // ----- import -----
-  const importFiles = async (files: FileList | File[], fromFolder = false) => {
+  const importFiles = async (list: FileList | File[], fromFolder = false) => {
+    // Copy first: the input is cleared right after this starts, which empties a live FileList.
+    const files = [...list];
     let n = 0;
     let last: string | null = null;
-    for (const f of [...files]) {
+    for (const f of files) {
       const rel = fromFolder && (f as File & { webkitRelativePath?: string }).webkitRelativePath
         ? (f as File & { webkitRelativePath: string }).webkitRelativePath.split("/").slice(1).join("/")
         : f.name;
@@ -733,6 +736,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
                     vault={vault}
                     onTasks={(focus) => openTab({ kind: "tasks", focus: focus ? Date.now() : undefined })}
                     onCalendar={() => openTab({ kind: "calendar" })}
+                    onPdf={(path) => (path ? openTab({ kind: "pdf", path }) : pdfInput.current?.click())}
                     onScratch={(path) => (path ? openTab({ kind: "scratch", path }) : void openScratch("new"))}
                     onDeleteScratch={(path) => {
                       setLayout((l) => {
@@ -802,6 +806,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       )}
       <input ref={fileInput} type="file" multiple hidden accept=".md,.markdown,.txt,.pdf,.png,.jpg,.jpeg,.gif,.webp,.svg,.zip" onChange={(e) => { if (e.target.files) void importFiles(e.target.files); e.target.value = ""; }} />
       <input ref={folderInput} type="file" hidden multiple {...({ webkitdirectory: "" } as object)} onChange={(e) => { if (e.target.files) void importFiles(e.target.files, true); e.target.value = ""; }} />
+      <input ref={pdfInput} type="file" hidden accept=".pdf,application/pdf" onChange={(e) => { if (e.target.files?.length) void importFiles(e.target.files); e.target.value = ""; }} />
       <input ref={insertImageInput} type="file" hidden accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) void insertImage(f); e.target.value = ""; }} />
     </div>
   );
@@ -812,10 +817,12 @@ function findThemes(custom: Theme[]): Theme[] {
 }
 
 /** The side pane's + menu: add a task, open Tasks or Calendar, or a scratch pad (new or existing). */
-function TabAdder({ vault, onTasks, onCalendar, onScratch, onDeleteScratch }: {
+function TabAdder({ vault, onTasks, onCalendar, onPdf, onScratch, onDeleteScratch }: {
   vault: Vault;
   onTasks: (focusAdd: boolean) => void;
   onCalendar: () => void;
+  /** Open this PDF beside the note, or with no path, upload one. */
+  onPdf: (path?: VaultPath) => void;
   onScratch: (path?: VaultPath) => void;
   onDeleteScratch: (path: VaultPath) => void;
 }) {
@@ -834,13 +841,31 @@ function TabAdder({ vault, onTasks, onCalendar, onScratch, onDeleteScratch }: {
   }, [open]);
   const pick = (fn: () => void) => () => { fn(); setOpen(false); };
   const scratches = open ? vault.scratches() : [];
+  const pdfs = open ? [...vault.files.values()].filter((f) => f.path.toLowerCase().endsWith(".pdf")).sort((a, b) => b.mtime - a.mtime) : [];
   return (
     <div className="tab-adder" ref={ref}>
-      <button className="w-icon-btn" aria-label="Add to the side pane" title="Add a task, calendar or scratch pad" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button className="w-icon-btn" aria-label="Add to the side pane" title="Add a PDF, task, calendar or scratch pad" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <Icon name="plus" size={16} />
       </button>
       {open && (
         <div className="w-popover tab-adder-menu" role="menu">
+          <button className="w-action" role="menuitem" onClick={pick(() => onPdf())}>
+            <Icon name="pdf" size={16} />
+            <span className="w-action-text"><span className="w-action-label">PDF</span><span className="w-action-desc">Upload one to read here</span></span>
+          </button>
+          {pdfs.length > 0 && (
+            <>
+              <div className="tab-adder-label">Open a PDF</div>
+              <ul className="tab-adder-list">
+                {pdfs.slice(0, 8).map((f) => (
+                  <li key={f.path}>
+                    <button className="tab-adder-item" title={f.path} onClick={pick(() => onPdf(f.path))}>{basename(f.path).replace(/\.pdf$/i, "")}</button>
+                  </li>
+                ))}
+              </ul>
+              <div className="tab-adder-sep" />
+            </>
+          )}
           <button className="w-action" role="menuitem" onClick={pick(() => onTasks(true))}>
             <Icon name="plus" size={16} />
             <span className="w-action-text"><span className="w-action-label">New task</span><span className="w-action-desc">For the vault or this note</span></span>
