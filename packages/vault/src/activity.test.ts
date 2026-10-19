@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { ACTIVITY_PATH, contributionGrid, countWords, emptyActivity, mergeActivity, notesCreatedByDay, MemoryStore, Vault, type ActivityLog } from "./index";
+import { ACTIVITY_PATH, activityYears, contributionGrid, countWords, emptyActivity, mergeActivity, notesCreatedByDay, MemoryStore, Vault, type ActivityLog } from "./index";
 import { isoDate } from "@writalin/shared";
 
 describe("activity", () => {
+  it("shows a past year and lists the years with writing", () => {
+    const log: ActivityLog = { version: 1, days: { "2025-03-04": { words: 120, edits: 2 }, "2026-10-01": { words: 5, edits: 1 } } };
+    const created = new Map([["2024-12-31", 1]]);
+    expect(activityYears(log, created)).toEqual([2026, 2025, 2024]);
+    const y = contributionGrid(log, created, { today: new Date(2026, 9, 19), end: new Date(2025, 11, 31) });
+    expect(y.weeks.flat().some((c) => c.date === "2025-03-04" && c.level > 0)).toBe(true);
+    expect(y.weeks.flat().some((c) => c.future)).toBe(false);
+    expect(y.totalWords).toBe(120);
+  });
+
   it("counts words, including CJK characters", () => {
     expect(countWords("Hello, world! It's 2026.")).toBe(4);
     expect(countWords("")).toBe(0);

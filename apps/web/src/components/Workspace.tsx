@@ -10,11 +10,12 @@ import { ActivityWorkspace, CalendarWorkspace, ImageWorkspace, NoteWorkspace, Sc
 import { AiPanel } from "./AiPanel";
 import { Home } from "./Home";
 import { NotePane, type NotePaneHandle } from "./NotePane";
+import { PointMenu, type MenuSection } from "./PointMenu";
 import { useNoteHost } from "./useNoteHost";
 import { SettingsModal } from "./Settings";
 import { ThemeEditor, loadCustomThemes } from "./ThemeEditor";
 import { exportNote, exportVaultZip, importTarget } from "../export";
-import type { Account } from "../api";
+import type { Account, AiTool } from "../api";
 import { getSyncLink, runSync } from "../state/sync";
 
 const PdfWorkspace = lazy(() => import("@writalin/workspaces/pdf").then((m) => ({ default: m.PdfWorkspace })));
@@ -75,6 +76,9 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState<false | true | "ai">(false);
   const [dockOpen, setDockOpen] = useState<string | null>(null);
+  /** The right-click menu on selected text, or the note's ⋯ menu. */
+  const [menu, setMenu] = useState<{ kind: "selection" | "note"; x: number; y: number } | null>(null);
+  const [aiRun, setAiRun] = useState<{ tool: AiTool; nonce: number }>();
   const [themeEditor, setThemeEditor] = useState(false);
   const [customThemes, setCustomThemes] = useState<Theme[]>([]);
   const [jump, setJump] = useState<{ heading?: string; line?: number; nonce: number } | undefined>();
@@ -454,6 +458,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           }}
           insert={(md) => ed()?.insert(md, { block: true })}
           onOpenSettings={() => { setDockOpen(null); setSettingsOpen("ai"); }}
+          autoRun={aiRun}
         />
       ),
     },
@@ -477,35 +482,66 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         />
       ),
     },
+  ];
+
+  const askAi = (tool: AiTool) => {
+    setAiRun({ tool, nonce: Date.now() });
+    setDockOpen("ai");
+  };
+  /** Turn the selection into a note of its own, leaving a link where it was. */
+  const selectionToNote = async () => {
+    const e = ed();
+    const text = e?.selection().trim();
+    if (!e || !text || !layout.note) return;
+    const title = text.split("\n")[0]!.replace(/^[#>\-*\d.\s[\]]+/, "").slice(0, 60).trim() || "Untitled";
+    const path = await vault.createNote(title, { body: `${text}\n` });
+    e.replaceSelection(`[[${noteName(path)}]]`);
+    toast(`Made “${noteName(path)}”. The link is where the text was.`, { action: { label: "Open", run: () => openPath(path) } });
+  };
+  const selectionMenu: MenuSection[] = [
     {
-      id: "import",
-      label: "Import",
-      icon: "import",
-      panel: (close) => (
-        <ActionGrid
-          actions={[
-            { label: "Files", desc: "Notes, PDFs, images, .zip", icon: "file", onClick: () => { fileInput.current?.click(); close(); } },
-            { label: "A folder", desc: "Obsidian vault or any folder", icon: "folder", onClick: () => { folderInput.current?.click(); close(); } },
-          ]}
-        />
-      ),
+      row: [
+        { label: "Bold", text: <b>B</b>, onClick: () => ed()?.wrap("**") },
+        { label: "Italic", text: <i>I</i>, onClick: () => ed()?.wrap("_") },
+        { label: "Highlight", text: <mark>H</mark>, onClick: () => ed()?.wrap("==") },
+        { label: "Strikethrough", text: <s>S</s>, onClick: () => ed()?.wrap("~~") },
+        { label: "Code", text: <code>{"<>"}</code>, onClick: () => ed()?.wrap("`") },
+        { label: "Link to a note", text: <Icon name="link" size={15} />, onClick: () => { const t = ed()?.selection() ?? ""; ed()?.replaceSelection(`[[${t}]]`); } },
+      ],
+      items: [
+        { label: "Heading", icon: "list", onClick: () => ed()?.prefix("## ") },
+        { label: "Checklist", icon: "checkSquare", onClick: () => ed()?.prefix("- [ ] ") },
+        { label: "New note from this", icon: "file", onClick: () => void selectionToNote() },
+      ],
     },
     {
-      id: "export",
-      label: "Export",
-      icon: "export",
-      panel: (close) => (
-        <ActionGrid
-          actions={[
-            { label: "Note as PDF", desc: "A4, ready to print", icon: "printer", disabled: !layout.note, onClick: () => { void exportNote(vault, layout.note!, "pdf"); close(); } },
-            { label: "Note as Markdown", desc: "The plain .md file", icon: "file", disabled: !layout.note, onClick: () => { void exportNote(vault, layout.note!, "md"); close(); } },
-            { label: "Note as HTML", desc: "A web page", icon: "file", disabled: !layout.note, onClick: () => { void exportNote(vault, layout.note!, "html"); close(); } },
-            { label: "Whole vault", desc: "Everything as a .zip", icon: "folder", onClick: () => { void exportVaultZip(vault); close(); } },
-          ]}
-        />
-      ),
+      title: "Study helper",
+      items: [
+        { label: "Explain", icon: "bulb", onClick: () => askAi("explain") },
+        { label: "Summarize", icon: "notes", onClick: () => askAi("summarize") },
+        { label: "Flashcards", icon: "copy", onClick: () => askAi("flashcards") },
+      ],
+    },
+    {
+      items: [
+        { label: "Copy", icon: "copy", hint: "Ctrl C", onClick: () => void navigator.clipboard?.writeText(ed()?.selection() ?? "") },
+        { label: "Cut", icon: "close", hint: "Ctrl X", onClick: () => { void navigator.clipboard?.writeText(ed()?.selection() ?? ""); ed()?.replaceSelection(""); } },
+      ],
     },
   ];
+  const noteMenu: MenuSection[] = layout.note
+    ? [
+        {
+          title: "Export",
+          items: [
+            { label: "PDF", icon: "printer", onClick: () => void exportNote(vault, layout.note!, "pdf") },
+            { label: "Markdown", icon: "file", onClick: () => void exportNote(vault, layout.note!, "md") },
+            { label: "Web page", icon: "file", onClick: () => void exportNote(vault, layout.note!, "html") },
+          ],
+        },
+        { items: [{ label: "Delete note", icon: "trash", danger: true, onClick: () => void deleteNote(layout.note!) }] },
+      ]
+    : [];
 
   const wsProps: WorkspaceProps = {
     vault,
@@ -544,7 +580,6 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
 
   const showLeft = layout.leftOpen && layout.tabs.length > 0 && layout.view === "note";
   const zone = layout.view === "note" && !layout.note ? "home" : layout.view;
-  const zoneMeta = ZONES.find((z) => z.id === zone);
 
   return (
     <div className={`app${focusMode ? " focus-mode" : ""}`}>
@@ -552,11 +587,11 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         <button className="rail-logo" onClick={() => goZone("home")} title={vault.name} aria-label="Home">
           <img src="/icons/icon128.png" className="app-logo" alt="" width={44} height={44} />
         </button>
-        <button className="rail-new w-glow" onClick={() => void newNote()} title="New note (Alt+N)" aria-label="New note">
-          <Icon name="plus" size={22} />
-          <span>New note</span>
-        </button>
         <div className="rail-zones">
+          <button className="rail-item rail-new w-glow" onClick={() => void newNote()} title="New note (Alt+N)" aria-label="New note">
+            <Icon name="plus" size={20} />
+            <span>New</span>
+          </button>
           {ZONES.map((z, i) => (
             <button
               key={z.id}
@@ -597,13 +632,11 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       <div className="stage">
         <header className="topbar">
           <div className="topbar-left">
-            {zone === "note" && layout.note ? (
+            {zone === "note" && layout.note && (
               <>
                 <span className="topbar-zone w-muted">{vault.name}</span>
                 <span className="topbar-crumb">{noteName(layout.note)}</span>
               </>
-            ) : (
-              <span className="topbar-zone">{zoneMeta?.label}</span>
             )}
           </div>
           <FocusTimer timer={timer} onDurationChange={(m) => void vault.saveSettings({ timerMinutes: m })} />
@@ -615,10 +648,10 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             )}
             {zone === "note" && (
               <>
-                <button className="w-icon-btn" aria-pressed={showLeft} onClick={() => (layout.tabs.length ? setLayout((l) => ({ ...l, leftOpen: !l.leftOpen })) : openTab({ kind: "tasks" }))} aria-label="Side pane" title="Side pane">
+                <button className="w-icon-btn topbar-desk" aria-pressed={showLeft} onClick={() => (layout.tabs.length ? setLayout((l) => ({ ...l, leftOpen: !l.leftOpen })) : openTab({ kind: "tasks" }))} aria-label="Side pane" title="Side pane">
                   <Icon name="split" />
                 </button>
-                <button className="w-icon-btn" aria-pressed={outlineOpen} onClick={() => setOutlineOpen((o) => !o)} aria-label="Outline" title="Outline (Ctrl+Shift+O)">
+                <button className="w-icon-btn topbar-desk" aria-pressed={outlineOpen} onClick={() => setOutlineOpen((o) => !o)} aria-label="Outline" title="Outline (Ctrl+Shift+O)">
                   <Icon name="list" />
                 </button>
               </>
@@ -627,6 +660,9 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
               <Icon name="search" size={15} />
               <span>Search or run a command</span>
               <kbd>Ctrl K</kbd>
+            </button>
+            <button className="w-icon-btn topbar-phone" onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings">
+              <Icon name="settings" />
             </button>
           </div>
         </header>
@@ -653,7 +689,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
               <header className="zone-head zone-head-pad">
                 <div>
                   <h1>Tasks</h1>
-                  <p className="w-muted">Vault tasks belong to no single note. Each note can have its own too. Ticking one updates its file.</p>
+                  <p className="w-muted">Vault tasks and each note's own.</p>
                 </div>
               </header>
               <TasksWorkspace {...wsProps} currentNote={null} />
@@ -713,16 +749,22 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
                   onRenamed={(to) => setLayout((l) => ({ ...l, note: to }))}
                   onOpen={(p) => openPath(p)}
                   onTag={(t) => { setHomeTag(t); setLayout((l) => ({ ...l, view: "home" })); }}
-                  onDelete={() => void deleteNote(layout.note!)}
+                  onMore={(r) => setMenu({ kind: "note", x: r.right - 220, y: r.bottom + 6 })}
+                  onContextMenu={(e) => {
+                    if (!ed()?.selection().trim()) return; // nothing selected: the browser's own menu
+                    e.preventDefault();
+                    setMenu({ kind: "selection", x: e.clientX, y: e.clientY });
+                  }}
                 />
               </section>
             </div>
           )}
         </main>
 
-        {(zone === "note" || zone === "home") && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
+        {zone === "note" && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
       </div>
 
+      {menu && <PointMenu x={menu.x} y={menu.y} label={menu.kind === "note" ? "Note" : "Selected text"} sections={menu.kind === "note" ? noteMenu : selectionMenu} onClose={() => setMenu(null)} />}
       {paletteOpen && <CommandPalette open onClose={() => setPaletteOpen(false)} commands={commands} />}
       {settingsOpen && (
         <SettingsModal
@@ -734,6 +776,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           onClose={() => { setSettingsOpen(false); void doSync(); }}
           onAccount={onAccount}
           onEditTheme={() => { setSettingsOpen(false); setThemeEditor(true); }}
+          onImport={(folder) => (folder ? folderInput : fileInput).current?.click()}
+          onExportVault={() => void exportVaultZip(vault)}
         />
       )}
       {themeEditor && (

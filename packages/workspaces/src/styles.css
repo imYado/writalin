@@ -174,3 +174,9 @@
 .cal-linked { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; color: var(--w-text-muted); font-size: 11.5px; }
 .cal-side-list .cal-linked-note { flex: none; color: var(--w-link); font-size: 11.5px; }
 .ws-quick-add select.w-input { padding-right: 32px; }
+.activity-controls { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.w-chip-quiet { font-size: 12px; padding: 5px 11px; }
+@media (max-width: 700px) {
+  .stat-row { grid-template-columns: repeat(2, 1fr); }
+  .stat { padding: 12px 14px; }
+}

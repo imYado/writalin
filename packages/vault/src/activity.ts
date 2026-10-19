@@ -99,13 +99,14 @@ function score(c: { words: number; notes: number }, metric: ActivityMetric): num
 export function contributionGrid(
   log: ActivityLog,
   created: Map<string, number>,
-  opts: { today?: Date; weekCount?: number; metric?: ActivityMetric } = {},
+  opts: { today?: Date; weekCount?: number; metric?: ActivityMetric; end?: Date } = {},
 ): ContributionSummary {
   const today = opts.today ?? new Date();
   const metric = opts.metric ?? "both";
   const weekCount = opts.weekCount ?? 53;
   const todayIso = isoDate(today);
-  const start = addDays(startOfWeek(today), -(weekCount - 1) * 7);
+  // `end` shows an earlier stretch (e.g. a past year); days after today stay "future".
+  const start = addDays(startOfWeek(opts.end ?? today), -(weekCount - 1) * 7);
 
   const cells: ContributionCell[] = [];
   for (let i = 0; i < weekCount * 7; i++) {
@@ -162,3 +163,11 @@ export function contributionGrid(
   };
 }
 
+
+/** Years with any writing or new notes, newest first. */
+export function activityYears(log: ActivityLog, created: Map<string, number>): number[] {
+  const years = new Set<number>();
+  for (const [d, v] of Object.entries(log.days)) if (v.words > 0 || v.edits > 0) years.add(Number(d.slice(0, 4)));
+  for (const [d, n] of created) if (n > 0) years.add(Number(d.slice(0, 4)));
+  return [...years].filter((y) => y > 1970).sort((a, b) => b - a);
+}

@@ -12,11 +12,13 @@ interface Props {
   onClose: () => void;
   onAccount: (a: Account | null) => void;
   onEditTheme: () => void;
+  onImport: (folder: boolean) => void;
+  onExportVault: () => void;
   /** Scroll to a section when opening, e.g. from the AI panel. */
   section?: "ai";
 }
 
-export function SettingsModal({ vault, vaultId, account, customThemes, onClose, onAccount, onEditTheme, section }: Props) {
+export function SettingsModal({ vault, vaultId, account, customThemes, onClose, onAccount, onEditTheme, onImport, onExportVault, section }: Props) {
   const [s, setS] = useState<VaultSettings>(vault.settings);
   const set = <K extends keyof VaultSettings>(k: K, v: VaultSettings[K]) => {
     setS((x) => ({ ...x, [k]: v }));
@@ -88,6 +90,15 @@ export function SettingsModal({ vault, vaultId, account, customThemes, onClose, 
             <span>Attachments folder</span>
             <input value={s.attachmentsFolder} onChange={(e) => set("attachmentsFolder", e.target.value || "attachments")} />
           </label>
+        </div>
+      </section>
+      <section className="settings-section">
+        <h3>Import and export</h3>
+        <p className="w-muted settings-note">Bring in notes, PDFs and images, or an Obsidian vault. Export keeps everything as plain files.</p>
+        <div className="w-row">
+          <button className="w-btn w-btn-small" onClick={() => onImport(false)}>Import files</button>
+          <button className="w-btn w-btn-small" onClick={() => onImport(true)}>Import a folder</button>
+          <button className="w-btn w-btn-small" onClick={onExportVault}>Export vault as .zip</button>
         </div>
       </section>
       <AiSection vault={vault} account={account} enabled={s.aiEnabled} onEnabled={(v) => set("aiEnabled", v)} />

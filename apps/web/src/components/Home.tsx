@@ -72,9 +72,6 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
             </select>
             </div>
           </div>
-          <button className="w-btn w-btn-primary" onClick={() => onNewNote(folder ?? undefined)}>
-            <Icon name="plus" size={16} /> New note
-          </button>
         </header>
 
         <div className="home-search w-glow">
@@ -116,9 +113,14 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
           </section>
           <div className="home-grid">
             <section className="home-section">
-              <h2>{tag ? `#${tag}` : folder != null ? folder || "Top level" : "Recent"}</h2>
+              <h2 className="home-h2-row">
+                {tag ? `#${tag}` : folder != null ? folder || "Top level" : "Recent"}
+                {folder != null && <button className="w-btn w-btn-small w-btn-ghost" onClick={() => onNewNote(folder || undefined)}><Icon name="plus" size={14} /> New note here</button>}
+              </h2>
               {notes.length === 0 && (
-                <p className="w-muted">{vault.notes.size ? "Nothing here yet." : "Your vault is empty. Start with a new note."}</p>
+                <p className="w-muted">
+                  {vault.notes.size ? "Nothing here yet." : <>Your vault is empty. <button className="w-link" onClick={() => onNewNote()}>Start a new note</button>.</>}
+                </p>
               )}
               <ul className="note-list">
                 {notes.map((n) => (
