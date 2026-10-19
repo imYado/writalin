@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { EditorHost, HostAction } from "@writalin/editor";
 import { newBlockId, taskDate, type Vault } from "@writalin/vault";
 import { isMarkdown } from "@writalin/shared";
+import { toast } from "@writalin/ui";
 
 /** The bridge between the shared editor and this vault. */
 export function useNoteHost(
@@ -17,6 +18,11 @@ export function useNoteHost(
     () => ({
       noteNames: () => [...vault.notes.values()].map((n) => n.name).sort(),
       tagNames: () => [...vault.tagCounts().keys()],
+      createNote: async (name) => {
+        if (vault.resolve(name, fromPath() ?? "")) return;
+        const path = await vault.createNote(name);
+        toast(`Made a new note “${name}”.`, { action: { label: "Open", run: () => handlers.openPath(path, {}) } });
+      },
       linkExists: (t) => vault.resolve(t, fromPath() ?? "") != null,
       openLink: (target, opts) => {
         const path = vault.resolve(target, fromPath() ?? "");

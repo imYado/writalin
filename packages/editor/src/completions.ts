@@ -1,4 +1,4 @@
-import { autocompletion, type Completion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
+import { autocompletion, startCompletion, type Completion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import type { EditorView } from "@codemirror/view";
 import { editorHost, type HostAction } from "./host";
 
@@ -64,6 +64,8 @@ function applySlash(item: SlashItem) {
     const end = item.block && lineIsEmpty ? line.to : to;
     const anchor = start + prefix.length + (cursor === -1 ? body.length : cursor);
     view.dispatch({ changes: { from: start, to: end, insert: text }, selection: { anchor }, userEvent: "input.complete" });
+    // "Link to note" lands inside [[ ]]: show the list of notes straight away.
+    if (body.includes("[[")) setTimeout(() => startCompletion(view), 0);
   };
 }
 
@@ -122,10 +124,29 @@ function wikiSource(ctx: CompletionContext): CompletionResult | null {
           view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + body.length + 2 }, userEvent: "input.complete" });
         },
       }));
+  // Typed a name that isn't a note yet: offer to make it, so the link isn't left dangling.
+  const typed = ctx.state.sliceDoc(start, ctx.pos).trim();
+  const lower = typed.toLowerCase();
+  const create: Completion[] =
+    typed && !embed && host.createNote && !host.noteNames().some((n) => n.toLowerCase() === lower)
+      ? [{
+          label: ctx.state.sliceDoc(start, ctx.pos),
+          displayLabel: `Create note “${typed}”`,
+          type: "keyword",
+          // After the Notes and Reminders sections, so Enter still picks a matching note first.
+          section: { name: "New note", rank: 2e9 },
+          boost: -50,
+          apply: (view: EditorView, _c: Completion, from: number, to: number) => {
+            const insert = closes ? typed : `${typed}]]`;
+            view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + typed.length + 2 }, userEvent: "input.complete" });
+            void host.createNote?.(typed);
+          },
+        }]
+      : [];
+  // No validFor: the "Create note" option has to follow what's typed.
   return {
     from: start,
-    options: [...notes, ...reminders],
-    validFor: /^[^[\]\n|#]*$/,
+    options: [...notes, ...reminders, ...create],
   };
 }
 

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BLANK_DRAWING, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
+import { BLANK_DRAWING, HIGHLIGHT_COLORS, TEXT_COLORS, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
 import { WORKSPACE_PATH, REMINDERS_PATH, importZip, isScratch, isSystemNote, taskDate, type Vault, type VaultRecord } from "@writalin/vault";
 import { basename, extname, isMarkdown, noteName, type VaultPath } from "@writalin/shared";
 import {
@@ -432,6 +432,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
               { label: "Code", desc: "Monospaced text", hint: "Ctrl+E", onClick: () => ed()?.wrap("`") },
             ].map((x) => ({ ...x, disabled: noNote }))}
           />
+          <h3>Color</h3>
+          <ColorRows disabled={noNote} onPick={(kind, c) => ed()?.color(kind, c)} />
           <h3>Structure</h3>
           <ActionGrid
             actions={[
@@ -494,7 +496,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             { label: "Table", desc: "Rows and columns", icon: "activity", onClick: () => { ed()?.insert("| Column 1 | Column 2 |\n| --- | --- |\n|  |  |", { block: true }); close(); } },
             { label: "Callout", desc: "Box for side info", icon: "bulb", onClick: () => { ed()?.insert("> [!note] ", { block: true }); close(); } },
             { label: "Flashcard", desc: "Question :: Answer", icon: "copy", onClick: () => { ed()?.insert("Question :: Answer", { block: true }); close(); } },
-            { label: "Link to note", desc: "Connect two notes", icon: "link", onClick: () => { ed()?.insert("[[]]", { cursorOffset: 2 }); close(); } },
+            { label: "Link to note", desc: "Pick a note or make a new one", icon: "link", onClick: () => { close(); ed()?.linkToNote(); } },
             { label: "Image", desc: "From your computer", icon: "image", onClick: () => { insertImageInput.current?.click(); close(); } },
             { label: "PDF quote", desc: "With a page link", icon: "pdf", onClick: () => { hostAction.current("insert-pdf-quote"); close(); } },
             { label: "Divider", desc: "Horizontal line", icon: "chevronRight", onClick: () => { ed()?.insert("---", { block: true }); close(); } },
@@ -526,12 +528,28 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         { label: "Highlight", text: <mark>H</mark>, onClick: () => ed()?.wrap("==") },
         { label: "Strikethrough", text: <s>S</s>, onClick: () => ed()?.wrap("~~") },
         { label: "Code", text: <code>{"<>"}</code>, onClick: () => ed()?.wrap("`") },
-        { label: "Link to a note", text: <Icon name="link" size={15} />, onClick: () => { const t = ed()?.selection() ?? ""; ed()?.replaceSelection(`[[${t}]]`); } },
+        { label: "Link to a note", text: <Icon name="link" size={15} />, onClick: () => ed()?.linkToNote() },
       ],
       items: [
         { label: "Heading", icon: "list", onClick: () => ed()?.prefix("## ") },
         { label: "Checklist", icon: "checkSquare", onClick: () => ed()?.prefix("- [ ] ") },
         { label: "New note from this", icon: "file", onClick: () => void selectionToNote() },
+      ],
+    },
+    {
+      title: "Text color",
+      items: [],
+      row: [
+        ...TEXT_COLORS.map((c) => ({ label: `${c.name} text`, text: <span className="color-swatch-a" style={{ color: c.value }}>A</span>, onClick: () => ed()?.color("text", c.value) })),
+        { label: "Remove text color", text: <span className="color-swatch-clear">A</span>, onClick: () => ed()?.color("text", null) },
+      ],
+    },
+    {
+      title: "Highlight",
+      items: [],
+      row: [
+        ...HIGHLIGHT_COLORS.map((c) => ({ label: `${c.name} highlight`, text: <span className="color-swatch" style={{ background: c.value }} />, onClick: () => ed()?.color("highlight", c.value) })),
+        { label: "Remove highlight color", text: <span className="color-swatch color-swatch-none" />, onClick: () => ed()?.color("highlight", null) },
       ],
     },
     {
@@ -671,6 +689,16 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       <div className="stage">
         <header className="topbar">
           <div className="topbar-left">
+            {zone !== "home" && (
+              <button
+                className="w-icon-btn topbar-phone topbar-back"
+                aria-label={zone === "note" && showLeft ? "Close the side pane" : "Back to Home"}
+                title="Back"
+                onClick={() => (zone === "note" && showLeft ? setLayout((l) => ({ ...l, leftOpen: false })) : goZone("home"))}
+              >
+                <Icon name="chevronLeft" />
+              </button>
+            )}
             {zone === "note" && layout.note && (
               <>
                 <span className="topbar-zone w-muted">{vault.name}</span>
@@ -920,6 +948,37 @@ function TabAdder({ vault, onStart, onTasks, onCalendar, onPdf, onScratch, onDel
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Swatches for text colour and coloured highlights, used in the Format panel. */
+function ColorRows({ disabled, onPick }: { disabled: boolean; onPick: (kind: "text" | "highlight", color: string | null) => void }) {
+  return (
+    <div className="color-rows">
+      <div className="color-row" role="group" aria-label="Text color">
+        <span className="w-muted w-small">Text</span>
+        {TEXT_COLORS.map((c) => (
+          <button key={c.value} className="color-btn" disabled={disabled} title={`${c.name} text`} aria-label={`${c.name} text`} onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("text", c.value)}>
+            <span className="color-swatch-a" style={{ color: c.value }}>A</span>
+          </button>
+        ))}
+        <button className="color-btn" disabled={disabled} title="Remove text color" aria-label="Remove text color" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("text", null)}>
+          <span className="color-swatch-clear">A</span>
+        </button>
+      </div>
+      <div className="color-row" role="group" aria-label="Highlight color">
+        <span className="w-muted w-small">Highlight</span>
+        {HIGHLIGHT_COLORS.map((c) => (
+          <button key={c.value} className="color-btn" disabled={disabled} title={`${c.name} highlight`} aria-label={`${c.name} highlight`} onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("highlight", c.value)}>
+            <span className="color-swatch" style={{ background: c.value }} />
+          </button>
+        ))}
+        <button className="color-btn" disabled={disabled} title="Remove highlight color" aria-label="Remove highlight color" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("highlight", null)}>
+          <span className="color-swatch color-swatch-none" />
+        </button>
+      </div>
+      <p className="w-muted w-small color-hint">Select some text first.</p>
     </div>
   );
 }

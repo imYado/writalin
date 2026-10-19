@@ -10,7 +10,7 @@ import { livePreview, linkClicks } from "./livePreview";
 import { writalinCompletions } from "./completions";
 import { headingFolding } from "./folding";
 import { focusCompartment, focusModeExtension } from "./focusMode";
-import { toggleWrap } from "./commands";
+import { exitInlineMark, toggleWrap } from "./commands";
 import { editorHost, type EditorHost } from "./host";
 import { printLayout, printCompartment } from "./printLayout";
 import { tables } from "./tables";
@@ -77,7 +77,7 @@ export function writalinExtensions(o: WritalinEditorOptions): Extension[] {
     focusCompartment.of(focusModeExtension(!!o.focusMode)),
     printCompartment.of(printLayout(!!o.printLayout)),
     formatKeys,
-    keymap.of([...closeBracketsKeymap, ...completionKeymap, ...markdownKeymap, ...searchKeymap, ...historyKeymap, ...defaultKeymap, indentWithTab]),
+    keymap.of([...closeBracketsKeymap, ...completionKeymap, { key: "Enter", run: exitInlineMark }, ...markdownKeymap, ...searchKeymap, ...historyKeymap, ...defaultKeymap, indentWithTab]),
     o.placeholder ? placeholderExt(o.placeholder) : [],
     EditorView.contentAttributes.of({ "aria-label": "Note editor", spellcheck: "true", autocorrect: "on", autocapitalize: "sentences" }),
     EditorView.updateListener.of((u) => {

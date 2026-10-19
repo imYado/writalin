@@ -6,13 +6,18 @@ import { writalinExtensions } from "./setup";
 import type { EditorHost } from "./host";
 import { focusCompartment, focusModeExtension } from "./focusMode";
 import { printCompartment, printLayout } from "./printLayout";
-import { insertText, selectedText, setLinePrefix, toggleWrap } from "./commands";
+import { insertText, selectedText, setColor, setLinePrefix, toggleWrap } from "./commands";
+import { startCompletion } from "@codemirror/autocomplete";
 import { outlineOf, type OutlineItem } from "./outline";
 
 export interface NoteEditorHandle {
   view: EditorView | null;
   insert(text: string, opts?: { block?: boolean; cursorOffset?: number }): void;
   wrap(marker: string): void;
+  /** Colour the selected text, or highlight it in a colour; `null` clears it. */
+  color(kind: "text" | "highlight", color: string | null): void;
+  /** Turn the selection into `[[link]]`, or with nothing selected open the note list inside `[[ ]]`. */
+  linkToNote(): void;
   prefix(prefix: string): void;
   selection(): string;
   /** Replace the selection (used by "Move to note" and AI tools). */
@@ -68,6 +73,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           readText: (t) => cb.current.host.readText?.(t) ?? Promise.resolve(null),
           writeText: (t, text) => cb.current.host.writeText?.(t, text) ?? Promise.resolve(),
           saveImage: (f) => cb.current.host.saveImage?.(f) ?? Promise.resolve(null),
+          createNote: (name) => cb.current.host.createNote?.(name) ?? Promise.resolve(),
         },
         placeholder: props.placeholder,
         focusMode: props.focusMode,
@@ -111,6 +117,16 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
       },
       insert: (text, opts) => viewRef.current && insertText(viewRef.current, text, opts),
       wrap: (m) => viewRef.current && toggleWrap(viewRef.current, m),
+      color: (kind, c) => viewRef.current && setColor(viewRef.current, kind, c),
+      linkToNote: () => {
+        const v = viewRef.current;
+        if (!v) return;
+        const r = v.state.selection.main;
+        const text = v.state.sliceDoc(r.from, r.to);
+        v.dispatch({ changes: { from: r.from, to: r.to, insert: `[[${text}]]` }, selection: { anchor: r.from + 2 + text.length }, userEvent: "input" });
+        v.focus();
+        setTimeout(() => startCompletion(v), 0);
+      },
       prefix: (p) => viewRef.current && setLinePrefix(viewRef.current, p),
       selection: () => (viewRef.current ? selectedText(viewRef.current) : ""),
       replaceSelection: (text) => {

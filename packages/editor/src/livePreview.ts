@@ -1,5 +1,5 @@
 import { syntaxTree } from "@codemirror/language";
-import type { EditorState, Range } from "@codemirror/state";
+import { RangeSetBuilder, type EditorState, type Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { editorHost } from "./host";
 import { parseMediaLine } from "./media";
@@ -144,6 +144,8 @@ const CALLOUT_RE = /^>\s*\[!([\w-]+)\]([+-]?)\s*(.*)$/;
 const WIKI_RE = /(!?)\[\[([^[\]|\n]+?)(\|[^[\]\n]*)?\]\]/g;
 const TAG_RE = /(^|[\s(,;])(#[\p{L}\p{N}_\-/]*[\p{L}_\-/][\p{L}\p{N}_\-/]*)/gu;
 const HIGHLIGHT_RE = /==([^=\n]+)==/g;
+/** Coloured text and coloured highlights, written by the colour menus. Only hex colours are styled. */
+const COLOR_RE = /<(span|mark) style="(color|background): ?(#[0-9a-fA-F]{3,8})">([^<\n]+)<\/\1>/g;
 /** `Question :: Answer` cards (same rule as the vault's parser): not tasks, spaces around `::`. */
 const CARD_RE = /^(?![ \t]*[-*+][ \t]+\[)([ \t]*(?:[-*+][ \t]+)?)(.+?)([ \t]+::[ \t]+)(.+?)[ \t]*$/;
 
@@ -334,6 +336,18 @@ function build(view: EditorView): DecorationSet {
       else decos.push(Decoration.replace({ widget: new CardSeparator() }).range(sep, a));
       decos.push(Decoration.mark({ class: isActive(line.from) ? "cm-card-a cm-card-a-shown" : "cm-card-a" }).range(a, end));
     }
+    for (const m of text.matchAll(COLOR_RE)) {
+      const start = from + m.index;
+      if (inCode(start)) continue;
+      const end = start + m[0].length;
+      const innerFrom = end - m[4]!.length - `</${m[1]}>`.length;
+      const innerTo = innerFrom + m[4]!.length;
+      const style = m[2] === "color" ? `color: ${m[3]}` : `background-color: ${m[3]}`;
+      decos.push(Decoration.mark({ class: m[2] === "color" ? "cm-colortext" : "cm-colormark", attributes: { style } }).range(innerFrom, innerTo));
+      // The tags are long and noisy, so they stay hidden even while editing the line.
+      decos.push(hide.range(start, innerFrom));
+      decos.push(hide.range(innerTo, end));
+    }
     for (const m of text.matchAll(HIGHLIGHT_RE)) {
       const start = from + m.index;
       if (inCode(start)) continue;
@@ -399,9 +413,13 @@ export const livePreview = ViewPlugin.fromClass(
     decorations: (v) => v.decorations,
     provide: (p) =>
       EditorView.atomicRanges.of((view) => {
-        // Hidden marks behave as one unit for the cursor.
+        // Only hidden markup and widgets act as one unit for the cursor. Styled
+        // text (bold, links, flashcards…) must stay editable letter by letter.
         const value = view.plugin(p);
-        return value ? value.decorations : Decoration.none;
+        if (!value) return Decoration.none;
+        const b = new RangeSetBuilder<Decoration>();
+        for (const it = value.decorations.iter(); it.value; it.next()) if (it.value.point) b.add(it.from, it.to, it.value);
+        return b.finish();
       }),
   },
 );

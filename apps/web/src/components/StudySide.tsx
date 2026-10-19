@@ -31,7 +31,7 @@ export function StudySide({ vault, version, onUploadPdf, onOpenPdf, onAi, onTask
     { id: "import", icon: "image", label: "Image or other file", desc: "Pictures, notes or a .zip", run: onImport },
   ];
   return (
-    <div className="ws study-side">
+    <div className="ws study-home">
       <div className="ws-scroll study-side-scroll">
         <header className="study-side-head">
           <h2>Study side</h2>

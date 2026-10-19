@@ -112,6 +112,7 @@ function AccountSection({ vault, vaultId, account, onAccount }: { vault: Vault; 
   const [linked, setLinked] = useState<string | null | undefined>(undefined);
   const [remotes, setRemotes] = useState<RemoteVault[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showOlder, setShowOlder] = useState(false);
 
   useEffect(() => {
     void getSyncLink(vaultId).then((l) => setLinked(l?.remoteId ?? null));
@@ -158,13 +159,38 @@ function AccountSection({ vault, vaultId, account, onAccount }: { vault: Vault; 
         <div className="w-col">
           <span className="w-muted">This vault isn't synced yet.</span>
           <div className="w-row">
-            <button className="w-btn w-btn-primary w-btn-small" disabled={busy} onClick={() => void connect({ name: vault.name })}>Sync this vault</button>
-            {remotes?.map((r) => (
-              <button key={r.id} className="w-btn w-btn-small" disabled={busy} onClick={() => void connect({ id: r.id, name: r.name })}>
-                Join “{r.name}” ({r.files} files)
-              </button>
-            ))}
+            {/* Re-use a synced copy with the same name rather than making another one. */}
+            <button className="w-btn w-btn-primary w-btn-small" disabled={busy} onClick={() => void connect(remotes?.find((r) => r.name === vault.name) ?? { name: vault.name })}>Sync this vault</button>
           </div>
+          {remotes && remotes.length > 0 && (
+            <ul className="sync-remotes" aria-label="Synced vaults on your account">
+              {(showOlder ? remotes : remotes.slice(0, 3)).map((r) => (
+                <li key={r.id}>
+                  <span>
+                    <strong>{r.name}</strong>
+                    <small className="w-muted">{r.files} file{r.files === 1 ? "" : "s"} · last synced {new Date(r.lastSync).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small>
+                  </span>
+                  <button className="w-btn w-btn-small" disabled={busy} onClick={() => void connect({ id: r.id, name: r.name })}>Join</button>
+                  <button
+                    className="w-icon-btn"
+                    disabled={busy}
+                    aria-label={`Delete the synced copy “${r.name}”`}
+                    title="Delete this synced copy from your account"
+                    onClick={async () => {
+                      if (!window.confirm(`Delete the synced copy “${r.name}” (${r.files} files) from your account? Notes on this computer stay.`)) return;
+                      await syncApi.deleteVault(r.id).catch(() => toast("Couldn't delete it. Try again.", { tone: "warn" }));
+                      setRemotes((list) => list?.filter((x) => x.id !== r.id) ?? null);
+                    }}
+                  >
+                    <Icon name="trash" size={14} />
+                  </button>
+                </li>
+              ))}
+              {remotes.length > 3 && (
+                <li><button className="ai-link" onClick={() => setShowOlder((s) => !s)}>{showOlder ? "Show fewer" : `Show ${remotes.length - 3} older`}</button></li>
+              )}
+            </ul>
+          )}
           <span className="w-muted settings-note">Files over 4 MB (large PDFs) stay on this computer for now.</span>
         </div>
       )}

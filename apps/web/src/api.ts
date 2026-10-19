@@ -77,11 +77,14 @@ export interface RemoteVault {
   id: string;
   name: string;
   files: number;
+  /** ISO time of the last change synced to it. */
+  lastSync: string;
 }
 
 export const syncApi = {
   vaults: () => call<{ vaults: RemoteVault[] }>("sync/vaults").then((r) => r.vaults),
   createVault: (name: string) => post<{ vault: RemoteVault }>("sync/vaults", { name }).then((r) => r.vault),
+  deleteVault: (id: string) => del<{ ok: true }>(`sync/vaults?id=${encodeURIComponent(id)}`),
 };
 
 /** SyncTransport over the /api/sync endpoints for one remote vault. */

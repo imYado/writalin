@@ -87,3 +87,106 @@ export function selectedText(view: EditorView): string {
   const s = view.state.selection.main;
   return view.state.sliceDoc(s.from, s.to);
 }
+
+/** Inline pairs Enter can step out of, longest first. */
+const CLOSERS = ["</span>", "</mark>", "]]", "**", "==", "~~", "`", "_"];
+
+/**
+ * Enter with the cursor just before the end of an inline mark (`[[Note|]]`,
+ * `**bold|**`, `==hi|==`…) moves past the closing marks instead of breaking
+ * the line, so you keep typing after it.
+ */
+export function exitInlineMark(view: EditorView): boolean {
+  const { state } = view;
+  const r = state.selection.main;
+  if (!r.empty || state.selection.ranges.length > 1) return false;
+  const line = state.doc.lineAt(r.head);
+  const before = line.text.slice(0, r.head - line.from);
+  const after = line.text.slice(r.head - line.from);
+  for (const c of CLOSERS) {
+    if (!after.startsWith(c)) continue;
+    let open: boolean;
+    if (c === "]]") open = before.lastIndexOf("[[") > before.lastIndexOf("]]");
+    else if (c === "</span>" || c === "</mark>") open = before.lastIndexOf(c === "</span>" ? "<span" : "<mark") > before.lastIndexOf(c);
+    else open = before.split(c).length % 2 === 0;
+    if (!open) continue;
+    // Step over a run of closers, e.g. `**[[Note]]**`.
+    let to = r.head + c.length;
+    for (let rest = after.slice(c.length), moved = true; moved; ) {
+      moved = false;
+      for (const d of CLOSERS) {
+        if (rest.startsWith(d) && d !== "_") {
+          to += d.length;
+          rest = rest.slice(d.length);
+          moved = true;
+          break;
+        }
+      }
+    }
+    view.dispatch({ selection: { anchor: to }, scrollIntoView: true, userEvent: "select" });
+    return true;
+  }
+  return false;
+}
+
+/** Text colours and highlighter colours offered in the menus. Hex only, so they're safe in a style attribute. */
+export const TEXT_COLORS = [
+  { name: "Red", value: "#e03131" },
+  { name: "Orange", value: "#e8590c" },
+  { name: "Green", value: "#2f9e44" },
+  { name: "Blue", value: "#1c7ed6" },
+  { name: "Purple", value: "#9c36b5" },
+  { name: "Gray", value: "#868e96" },
+] as const;
+export const HIGHLIGHT_COLORS = [
+  { name: "Yellow", value: "#fff3a3" },
+  { name: "Green", value: "#c3f0c8" },
+  { name: "Blue", value: "#c5e3ff" },
+  { name: "Pink", value: "#ffd1e8" },
+  { name: "Purple", value: "#e5d4ff" },
+  { name: "Orange", value: "#ffdcb8" },
+] as const;
+
+const COLOR_OPEN_BEFORE = /<(span|mark) style="(?:color|background): ?#[0-9a-fA-F]{3,8}">$/;
+
+/**
+ * Colour the selection's text (`<span style="color: …">`) or highlight it in a
+ * colour (`<mark style="background: …">`). Picking again over already-coloured
+ * text swaps the colour; `null` removes it.
+ */
+export function setColor(view: EditorView, kind: "text" | "highlight", color: string | null): boolean {
+  if (color && !/^#[0-9a-fA-F]{3,8}$/.test(color)) return false;
+  const { state } = view;
+  const tag = kind === "text" ? "span" : "mark";
+  const prop = kind === "text" ? "color" : "background";
+  const tr = state.changeByRange((range) => {
+    const line = state.doc.lineAt(range.from);
+    const open = COLOR_OPEN_BEFORE.exec(state.sliceDoc(line.from, range.from));
+    const close = `</${tag}>`;
+    const wrapped = open && open[1] === tag && state.sliceDoc(range.to, range.to + close.length) === close;
+    // No space before the colour, so `#e03131` is never read as a #tag.
+    const openTag = color ? `<${tag} style="${prop}:${color}">` : "";
+    const closeTag = color ? close : "";
+    if (wrapped) {
+      const openFrom = range.from - open[0].length;
+      return {
+        changes: [
+          { from: openFrom, to: range.from, insert: openTag },
+          { from: range.to, to: range.to + close.length, insert: closeTag },
+        ],
+        range: EditorSelection.range(openFrom + openTag.length, range.to - open[0].length + openTag.length),
+      };
+    }
+    if (!color || range.empty) return { range };
+    return {
+      changes: [
+        { from: range.from, insert: openTag },
+        { from: range.to, insert: closeTag },
+      ],
+      range: EditorSelection.range(range.from + openTag.length, range.to + openTag.length),
+    };
+  });
+  view.dispatch(state.update(tr, { scrollIntoView: true, userEvent: "input.format" }));
+  view.focus();
+  return true;
+}
