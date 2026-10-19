@@ -3,6 +3,8 @@ import { RangeSetBuilder, StateEffect, StateField, type EditorState, type Range 
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { editorHost } from "./host";
 import { parseMediaLine } from "./media";
+import { HIGHLIGHT_RE, highlightEmoji } from "./highlight";
+import { matchCardLine } from "@writalin/vault";
 
 /**
  * Obsidian-style live preview: Markdown stays the document, but syntax marks
@@ -143,12 +145,14 @@ function activeLines(state: EditorState): Set<number> {
 const CALLOUT_RE = /^>\s*\[!([\w-]+)\]([+-]?)\s*(.*)$/;
 const WIKI_RE = /(!?)\[\[([^[\]|\n]+?)(\|[^[\]\n]*)?\]\]/g;
 const TAG_RE = /(^|[\s(,;])(#[\p{L}\p{N}_\-/]*[\p{L}_\-/][\p{L}\p{N}_\-/]*)/gu;
-/** `==text==`; a single `=` inside is fine (e.g. a colour tag's `style="…"`). */
-const HIGHLIGHT_RE = /==((?:[^=\n]|=(?!=))+)==/g;
 /** Opening and closing colour tags written by the colour menus. Only hex colours are styled. */
 const COLOR_TAG_RE = /<(span|mark) style="(color|background): ?(#[0-9a-fA-F]{3,8})">|<\/(span|mark)>/g;
-/** `Question :: Answer` cards (same rule as the vault's parser): not tasks, spaces around `::`. */
-const CARD_RE = /^(?![ \t]*[-*+][ \t]+\[)([ \t]*(?:[-*+][ \t]+)?)(.+?)([ \t]+::[ \t]+)(.+?)[ \t]*$/;
+/** `Question :: Answer` / `Q:::A` card lines: prefix, question, separator, answer (checked with the vault's matchCardLine). */
+const CARD_RE = /^(?![ \t]*[-*+][ \t]+\[)([ \t]*(?:[-*+][ \t]+)?)(.+?)([ \t]*:::?[ \t]*)(.+?)[ \t]*$/;
+/** The Spaced Repetition plugin's review note after a card. */
+const SR_NOTE_RE = /[ \t]*<!--SR:[^>]*-->[ \t]*$/;
+/** A line with just `?` or `??` splits a multi-line card's question from its answer. */
+const MULTI_SEP_RE = /^[ \t]*\?\??[ \t]*$/;
 
 /** Flashcards whose answer was uncovered with "Show answer", by the start of their line. */
 const toggleCard = StateEffect.define<number>({ map: (pos, ch) => ch.mapPos(pos) });
@@ -173,8 +177,38 @@ function build(view: EditorView): DecorationSet {
   const decos: Range<Decoration>[] = [];
   const lineDeco = (pos: number, cls: string) => decos.push(Decoration.line({ class: cls }).range(pos));
   const isActive = (pos: number) => active.has(state.doc.lineAt(pos).number);
+  // Like Obsidian: inline marks (bold, links, highlights…) show their syntax only
+  // while the cursor touches that piece of text; block marks go by the line.
+  const near = (a: number, b: number) => state.selection.ranges.some((r) => r.from <= b && r.to >= a);
   const codeRanges: [number, number][] = [];
   const host = state.facet(editorHost);
+
+  /** Question lines, a `?` line, answer lines, up to blank lines (Spaced Repetition plugin syntax). */
+  const multiLineCard = (sepNo: number) => {
+    const doc = state.doc;
+    const blank = (n: number) => n < 1 || n > doc.lines || !doc.line(n).text.trim() || MULTI_SEP_RE.test(doc.line(n).text);
+    let q = sepNo;
+    while (!blank(q - 1)) q--;
+    let a = sepNo;
+    while (!blank(a + 1)) a++;
+    if (q === sepNo || a === sepNo) return;
+    const sepLine = doc.line(sepNo);
+    let editing = false;
+    for (let n = q; n <= a && !editing; n++) editing = active.has(n);
+    for (let n = q; n < sepNo; n++) lineDeco(doc.line(n).from, "cm-card cm-card-mq");
+    const open = !!state.field(shownCards, false)?.has(sepLine.from);
+    if (editing) lineDeco(sepLine.from, "cm-card-msep-raw");
+    else {
+      lineDeco(sepLine.from, "cm-card cm-card-msep");
+      decos.push(Decoration.replace({ widget: new CardToggle(sepLine.from, open) }).range(sepLine.from, sepLine.to));
+    }
+    for (let n = sepNo + 1; n <= a; n++) {
+      const l = doc.line(n);
+      lineDeco(l.from, editing ? "cm-card-ma cm-card-ma-editing" : open ? "cm-card-ma cm-card-ma-shown" : "cm-card-ma");
+      const note = SR_NOTE_RE.exec(l.text);
+      if (note && !editing) decos.push(hide.range(l.from + note.index, l.to));
+    }
+  };
 
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
@@ -206,13 +240,14 @@ function build(view: EditorView): DecorationSet {
         if (name === "InlineCode") {
           codeRanges.push([node.from, node.to]);
           decos.push(Decoration.mark({ class: "cm-inline-code" }).range(node.from, node.to));
-          if (!isActive(node.from)) {
+          if (!near(node.from, node.to)) {
             for (let c = n.firstChild; c; c = c.nextSibling) if (c.name === "CodeMark") decos.push(hide.range(c.from, c.to));
           }
           return false;
         }
         if (name === "EmphasisMark" || name === "StrikethroughMark") {
-          if (!isActive(node.from)) decos.push(hide.range(node.from, node.to));
+          const owner = n.parent ?? n;
+          if (!near(owner.from, owner.to)) decos.push(hide.range(node.from, node.to));
           return;
         }
         if (name === "Emphasis") decos.push(Decoration.mark({ class: "cm-em" }).range(node.from, node.to));
@@ -269,7 +304,7 @@ function build(view: EditorView): DecorationSet {
         }
         if (name === "Image") {
           const url = n.getChild("URL");
-          if (url && !isActive(node.from)) {
+          if (url && !near(node.from, node.to)) {
             const raw = state.sliceDoc(url.from, url.to);
             const altM = /^!\[([^\]]*)\]/.exec(state.sliceDoc(node.from, node.to));
             const external = /^[a-z]+:/i.test(raw);
@@ -285,7 +320,7 @@ function build(view: EditorView): DecorationSet {
             const href = state.sliceDoc(url.from, url.to);
             const textFrom = marks[0]?.to ?? node.from;
             const textTo = marks[1]?.from ?? node.to;
-            const rendered = !isActive(node.from);
+            const rendered = !near(node.from, node.to);
             if (textTo > textFrom) decos.push(Decoration.mark({ class: "cm-link", attributes: { "data-href": href, ...(rendered ? { "data-rendered": "1" } : {}) } }).range(textFrom, textTo));
             if (rendered) {
               if (marks[0]) decos.push(hide.range(marks[0].from, marks[0].to));
@@ -315,13 +350,13 @@ function build(view: EditorView): DecorationSet {
       if (embed) {
         // Images on a line of their own are blocks (see media.ts).
         if (parseMediaLine(state.doc.lineAt(start).text)) continue;
-        if (!isActive(start)) decos.push(Decoration.replace({ widget: new EmbedWidget(target, alias ?? "", false) }).range(start, end));
+        if (!near(start, end)) decos.push(Decoration.replace({ widget: new EmbedWidget(target, alias ?? "", false) }).range(start, end));
         continue;
       }
       const exists = !host || !target || host.linkExists(target);
       const reminder = /^reminders$/i.test(target) && heading?.startsWith("^");
       const attrs = { class: `cm-wikilink${exists ? "" : " cm-wikilink-missing"}${reminder ? " cm-reminder-link" : ""}`, attributes: { "data-target": target, "data-heading": heading ?? "" } };
-      if (isActive(start)) {
+      if (near(start, end)) {
         decos.push(Decoration.mark(attrs).range(start, end));
       } else {
         const shownFrom = alias != null ? start + 2 + m[2]!.length + 1 : start + 2;
@@ -339,13 +374,20 @@ function build(view: EditorView): DecorationSet {
       decos.push(Decoration.mark({ class: "cm-tag", attributes: { "data-tag": m[2]!.slice(1) } }).range(start, start + m[2]!.length));
     }
     // Flashcards: the answer sits under the question, covered until "Show answer"
-    // (or until the cursor is on the line, so it can be edited).
+    // (or until the cursor is on the card, so it can be edited).
     const shown = state.field(shownCards, false);
     for (let pos = from; pos <= to; ) {
       const line = state.doc.lineAt(pos);
       pos = line.to + 1;
-      const m = CARD_RE.exec(line.text);
-      if (!m || inCode(line.from)) continue;
+      if (inCode(line.from)) continue;
+      if (MULTI_SEP_RE.test(line.text)) {
+        multiLineCard(line.number);
+        continue;
+      }
+      if (!matchCardLine(line.text)) continue;
+      const note = SR_NOTE_RE.exec(line.text);
+      const m = CARD_RE.exec(note ? line.text.slice(0, note.index) : line.text);
+      if (!m) continue;
       const q = line.from + m[1]!.length;
       const sep = q + m[2]!.length;
       const a = sep + m[3]!.length;
@@ -355,11 +397,13 @@ function build(view: EditorView): DecorationSet {
       if (isActive(line.from)) {
         decos.push(Decoration.mark({ class: "cm-card-sep-raw" }).range(sep, a));
         decos.push(Decoration.mark({ class: "cm-card-a cm-card-a-editing" }).range(a, end));
+        if (note) decos.push(Decoration.mark({ class: "cm-card-srnote" }).range(line.from + note.index, line.to));
         continue;
       }
       const open = !!shown?.has(line.from);
       decos.push(Decoration.replace({ widget: new CardToggle(line.from, open) }).range(sep, a));
       decos.push(Decoration.mark({ class: open ? "cm-card-a cm-card-a-shown" : "cm-card-a", attributes: open ? {} : { "aria-hidden": "true" } }).range(a, end));
+      if (note) decos.push(hide.range(line.from + note.index, line.to));
     }
     // Colour tags can nest (a coloured highlight around red text), so pair them per line with a stack.
     for (let pos = from; pos <= to; ) {
@@ -390,9 +434,13 @@ function build(view: EditorView): DecorationSet {
       const start = from + m.index;
       if (inCode(start)) continue;
       const end = start + m[0].length;
-      decos.push(Decoration.mark({ class: "cm-highlight" }).range(start, end));
-      if (!isActive(start)) {
-        decos.push(hide.range(start, start + 2));
+      const emoji = highlightEmoji(m[1]!);
+      decos.push(
+        Decoration.mark(emoji ? { class: "cm-highlight cm-highlight-color", attributes: { style: `background-color: ${emoji.color}` } } : { class: "cm-highlight" }).range(start, end),
+      );
+      if (!near(start, end)) {
+        // `==🟢 ` → hidden; the emoji only picks the colour.
+        decos.push(hide.range(start, start + 2 + (emoji?.length ?? 0)));
         decos.push(hide.range(end - 2, end));
       }
     }

@@ -559,8 +559,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       title: "Highlight",
       items: [],
       row: [
-        ...HIGHLIGHT_COLORS.map((c) => ({ label: `${c.name} highlight`, text: <span className="color-swatch" style={{ background: c.value }} />, onClick: () => ed()?.color("highlight", c.value) })),
-        { label: "Remove highlight color", text: <span className="color-swatch color-swatch-none" />, onClick: () => ed()?.color("highlight", null) },
+        ...HIGHLIGHT_COLORS.map((c) => ({ label: `${c.name} highlight`, text: <span className="color-swatch" style={{ background: c.value }} />, onClick: () => ed()?.color("highlight", c.emoji) })),
+        { label: "Remove highlight", text: <span className="color-swatch color-swatch-none" />, onClick: () => ed()?.color("highlight", null) },
       ],
     },
     {
@@ -981,11 +981,11 @@ function ColorRows({ disabled, onPick }: { disabled: boolean; onPick: (kind: "te
       <div className="color-row" role="group" aria-label="Highlight color">
         <span className="w-muted w-small">Highlight</span>
         {HIGHLIGHT_COLORS.map((c) => (
-          <button key={c.value} className="color-btn" disabled={disabled} title={`${c.name} highlight`} aria-label={`${c.name} highlight`} onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("highlight", c.value)}>
+          <button key={c.value} className="color-btn" disabled={disabled} title={`${c.name} highlight`} aria-label={`${c.name} highlight`} onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("highlight", c.emoji)}>
             <span className="color-swatch" style={{ background: c.value }} />
           </button>
         ))}
-        <button className="color-btn" disabled={disabled} title="Remove highlight color" aria-label="Remove highlight color" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("highlight", null)}>
+        <button className="color-btn" disabled={disabled} title="Remove highlight" aria-label="Remove highlight" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("highlight", null)}>
           <span className="color-swatch color-swatch-none" />
         </button>
       </div>

@@ -1,3 +1,4 @@
+import { HIGHLIGHT_COLORS, HIGHLIGHT_RE, highlightEmoji } from "./highlight";
 import { EditorSelection, type ChangeSpec } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 
@@ -138,14 +139,47 @@ export const TEXT_COLORS = [
   { name: "Purple", value: "#9c36b5" },
   { name: "Gray", value: "#868e96" },
 ] as const;
-export const HIGHLIGHT_COLORS = [
-  { name: "Yellow", value: "#fff3a3" },
-  { name: "Green", value: "#c3f0c8" },
-  { name: "Blue", value: "#c5e3ff" },
-  { name: "Pink", value: "#ffd1e8" },
-  { name: "Purple", value: "#e5d4ff" },
-  { name: "Orange", value: "#ffdcb8" },
-] as const;
+export { HIGHLIGHT_COLORS };
+
+/**
+ * Highlight the selection as `==text==`, in a colour by putting its emoji
+ * first (`==🟢 text==`, as in Obsidian). Inside a highlight already, this
+ * swaps its colour; `null` removes the highlight.
+ */
+export function setHighlight(view: EditorView, emoji: string | null): boolean {
+  const { state } = view;
+  const tr = state.changeByRange((range) => {
+    const line = state.doc.lineAt(range.from);
+    for (const m of line.text.matchAll(HIGHLIGHT_RE)) {
+      const start = line.from + m.index;
+      const end = start + m[0].length;
+      if (range.from < start || range.to > end) continue;
+      const old = highlightEmoji(m[1]!)?.length ?? 0;
+      if (emoji === null) {
+        const cut = 2 + old;
+        return {
+          changes: [{ from: start, to: start + cut }, { from: end - 2, to: end }],
+          range: EditorSelection.range(Math.max(start, range.from - cut), Math.max(start, range.to - cut)),
+        };
+      }
+      const insert = emoji ? `${emoji} ` : "";
+      const shift = insert.length - old;
+      return {
+        changes: { from: start + 2, to: start + 2 + old, insert },
+        range: EditorSelection.range(range.from + shift, range.to + shift),
+      };
+    }
+    if (emoji === null || range.empty) return { range };
+    const open = `==${emoji ? `${emoji} ` : ""}`;
+    return {
+      changes: [{ from: range.from, insert: open }, { from: range.to, insert: "==" }],
+      range: EditorSelection.range(range.from + open.length, range.to + open.length),
+    };
+  });
+  view.dispatch(state.update(tr, { scrollIntoView: true, userEvent: "input.format" }));
+  view.focus();
+  return true;
+}
 
 const COLOR_OPEN_BEFORE = /<(span|mark) style="(?:color|background): ?#[0-9a-fA-F]{3,8}">$/;
 const COLOR_CLOSE_AFTER = /^<\/(span|mark)>/;

@@ -30,6 +30,9 @@
 .w-editor .cm-strike { text-decoration: line-through; color: var(--w-text-muted); }
 .w-editor .cm-inline-code { font-family: var(--w-font-mono); font-size: 0.88em; background: var(--w-code-bg); border-radius: 6px; padding: 1px 5px; }
 .w-editor .cm-highlight { background: var(--w-highlight); border-radius: 3px; padding: 0 1px; }
+/* `==🟢 text==`: a pastel highlight, so dark text stays readable in dark themes too. */
+.w-editor .cm-highlight-color { color: #1d1d1f; }
+.w-editor .cm-colortext .cm-highlight-color { color: inherit; }
 .w-editor .cm-colormark { border-radius: 3px; padding: 0 1px; color: #1d1d1f; }
 /* Coloured text keeps its colour inside a highlight. */
 .w-editor .cm-colortext .cm-colormark { color: inherit; }
@@ -159,4 +162,16 @@
 .w-editor .cm-card-a:not(.cm-card-a-shown, .cm-card-a-editing) * { color: transparent !important; background: none !important; }
 .w-editor .cm-card-a-shown { color: inherit; background: var(--w-bg, transparent); user-select: auto; }
 .w-editor .cm-card-a-editing { display: inline; margin: 0; padding: 0; min-height: 0; color: inherit; background: none; user-select: auto; }
+/* Multi-line cards: question lines, a `?` line (the button), answer lines covered. */
+.w-editor .cm-card-mq { font-weight: 600; }
+.w-editor .cm-card-msep .cm-card-toggle { padding: 2px 0 4px; }
+.w-editor .cm-card-msep .cm-widgetBuffer { display: none; }
+.w-editor .cm-card-ma { padding-left: 8px !important; }
+.w-editor .cm-card-ma + .cm-card-ma { border-top-left-radius: 0; }
+.w-editor .cm-card-msep-raw { color: var(--w-accent); font-weight: 600; }
+.w-editor .cm-card-ma { color: transparent; background: var(--w-soft-2); user-select: none; border-radius: 8px; }
+.w-editor .cm-card-ma:not(.cm-card-ma-shown, .cm-card-ma-editing) * { color: transparent !important; background: none !important; }
+.w-editor .cm-card-ma-shown, .w-editor .cm-card-ma-editing { color: inherit; background: none; user-select: auto; }
+.w-editor .cm-card-srnote { color: var(--w-text-muted); font-size: 0.8em; }
+@media print { .w-editor .cm-card-ma { color: inherit; background: none; } }
 @media print { .w-editor .cm-card-a { color: inherit; background: none; } .w-editor .cm-card-show { display: none; } }
