@@ -290,3 +290,7 @@
 .ai-cards li span { color: var(--w-text-muted); }
 .ai-source { font-size: 12px; }
 .w-btn-primary kbd { background: rgb(255 255 255 / 0.2); color: inherit; }
+.ai-getkey { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ai-getkey .w-btn { text-decoration: none; }
+.ai-detect { margin: -4px 0 0; color: var(--w-text-muted); }
+.ai-detect b { color: var(--w-text); font-weight: 600; }

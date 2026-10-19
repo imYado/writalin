@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import type { Vault, VaultSettings } from "@writalin/vault";
-import { BUILT_IN_THEMES, Modal, toast, type Theme } from "@writalin/ui";
+import { BUILT_IN_THEMES, Icon, Modal, toast, type Theme } from "@writalin/ui";
 import { aiApi, ApiError, auth, syncApi, type Account, type AiState, type RemoteVault } from "../api";
 import { getSyncLink, linkSync, runSync, unlinkSync } from "../state/sync";
+import { detectProvider } from "../aiKey";
 
 interface Props {
   vault: Vault;
@@ -178,19 +179,31 @@ function AccountSection({ vault, vaultId, account, onAccount }: { vault: Vault; 
 function AiSection({ account, enabled, onEnabled }: { vault: Vault; account: Account | null | undefined; enabled: boolean; onEnabled: (v: boolean) => void }) {
   const [state, setState] = useState<AiState | null>(null);
   const [key, setKey] = useState("");
-  const [provider, setProvider] = useState("anthropic");
+  // Groq is free to start with, so it's the suggestion until a key says otherwise.
+  const [provider, setProvider] = useState("groq");
   const [model, setModel] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (account && enabled) aiApi.state().then((st) => { setState(st); setProvider(st.provider); setModel(st.model ?? ""); setBaseUrl(st.baseUrl ?? ""); }).catch(() => setState(null));
+    if (account && enabled) aiApi.state().then((st) => { setState(st); setProvider(st.hasOwnKey ? st.provider : "groq"); setModel(st.hasOwnKey ? st.model ?? "" : ""); setBaseUrl(st.baseUrl ?? ""); }).catch(() => setState(null));
   }, [account, enabled]);
   const info = state?.providers.find((p) => p.id === provider);
   const savedLabel = state?.providers.find((p) => p.id === state.provider)?.label ?? "Your";
   /** Same service as the saved key: the model can change without entering the key again. */
   const sameService = Boolean(state?.hasOwnKey && state.provider === provider && provider !== "custom");
+  const detected = key.trim() ? detectProvider(key) : null;
+  const pickService = (id: string) => {
+    setProvider(id);
+    const p = state?.providers.find((x) => x.id === id);
+    setModel(id === state?.provider && state.model ? state.model : p?.defaultModel ?? "");
+  };
+  const onKey = (value: string) => {
+    setKey(value);
+    const found = value.trim() ? detectProvider(value) : null;
+    if (found && found !== provider) pickService(found);
+  };
 
   const act = async (fn: () => Promise<AiState>, done?: string) => {
     setBusy(true);
@@ -255,10 +268,41 @@ function AiSection({ account, enabled, onEnabled }: { vault: Vault; account: Acc
               }
             }}
           >
+            <div className="ai-getkey">
+              <a className="w-btn w-btn-small" href={info?.keyUrl || "https://console.groq.com/keys"} target="_blank" rel="noopener noreferrer">
+                <Icon name="key" size={14} /> Get your API key
+              </a>
+              <span className="w-muted w-small">Opens the {info?.keyUrl ? info.label : "Groq"} console in a new tab{provider === "groq" ? ". Groq is free to start." : "."}</span>
+            </div>
+            <label className="w-field">
+              <span>{sameService ? `Replace your ${info?.label ?? ""} key (optional)` : "Your API key"}</span>
+              <div className="w-row">
+                <input
+                  type="password"
+                  className="w-input"
+                  style={{ flex: 1 }}
+                  value={key}
+                  placeholder="Paste any AI key: gsk_…, sk-ant-…, AIza…"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(e) => onKey(e.target.value)}
+                />
+                <button className="w-btn w-btn-primary w-btn-small" disabled={busy || (!key.trim() && !(sameService && model.trim() !== (state?.model ?? "")))}>
+                  {busy ? "Checking…" : key.trim() ? "Save key" : "Save model"}
+                </button>
+              </div>
+            </label>
+            {key.trim() && (
+              <p className="w-small ai-detect" aria-live="polite">
+                {detected
+                  ? <>Looks like a <b>{info?.label}</b> key. Model set to <b>{model || info?.defaultModel}</b>; change it below if you like.</>
+                  : "Couldn't tell which service this key is for. Pick it below."}
+              </p>
+            )}
             <div className="w-row">
               <label className="w-field">
                 <span>AI service</span>
-                <select value={provider} onChange={(e) => { setProvider(e.target.value); setModel(e.target.value === state?.provider ? state.model ?? "" : ""); }}>
+                <select value={provider} onChange={(e) => pickService(e.target.value)}>
                   {(state?.providers ?? [{ id: "anthropic", label: "Anthropic (Claude)", defaultModel: "", keyUrl: "" }]).map((p) => (
                     <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
@@ -275,25 +319,6 @@ function AiSection({ account, enabled, onEnabled }: { vault: Vault; account: Acc
                 <input value={baseUrl} placeholder="https://api.example.com/v1" spellCheck={false} autoComplete="off" onChange={(e) => setBaseUrl(e.target.value)} />
               </label>
             )}
-            <label className="w-field">
-              <span>{sameService ? `Replace your ${info?.label ?? ""} key (optional)` : `Your ${info?.label ?? ""} API key`}</span>
-              <div className="w-row">
-                <input
-                  type="password"
-                  className="w-input"
-                  style={{ flex: 1 }}
-                  value={key}
-                  placeholder={provider === "anthropic" ? "sk-ant-…" : "Paste your key"}
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(e) => setKey(e.target.value)}
-                />
-                <button className="w-btn w-btn-primary w-btn-small" disabled={busy || (!key.trim() && !(sameService && model.trim() !== (state?.model ?? "")))}>
-                  {busy ? "Checking…" : key.trim() ? "Save key" : "Save model"}
-                </button>
-              </div>
-            </label>
-            {info?.keyUrl && <a className="w-small" href={info.keyUrl} target="_blank" rel="noopener noreferrer">Get a {info.label} key</a>}
             <p className="w-muted settings-note">
               Your key is checked with the service, then encrypted (AES-256) on our server. It's never sent back to your browser; only its last 4 characters are shown.
             </p>

@@ -27,6 +27,19 @@ const AI_TOOLS: { id: PdfAiTool; label: string }[] = [
 ];
 /** Matches the server's limit on how much text one request may send. */
 const MAX_AI_CHARS = 58_000;
+type AiScope = "page" | "all" | "pick" | "selection";
+
+/** [1, 2, 3, 7] → "1–3, 7" */
+export function formatPages(pages: number[]): string {
+  const out: string[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    let j = i;
+    while (j + 1 < pages.length && pages[j + 1] === pages[j]! + 1) j++;
+    out.push(j > i ? `${pages[i]}–${pages[j]}` : `${pages[i]}`);
+    i = j;
+  }
+  return out.join(", ");
+}
 
 export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, quality, currentNote, askAi }: Props) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
@@ -39,7 +52,9 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   const [sel, setSel] = useState<{ text: string; page: number; x: number; y: number } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [aiOpen, setAiOpen] = useState(false);
-  const [aiScope, setAiScope] = useState<"page" | "all">("page");
+  const [aiScope, setAiScope] = useState<AiScope>("page");
+  /** Pages ticked in "Choose pages" mode; null when not choosing. */
+  const [picked, setPicked] = useState<Set<number> | null>(null);
   const aiMenu = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -50,36 +65,60 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   }, [aiOpen]);
 
   const link = (p?: number) => `${path.replace(/ /g, "%20")}${p ? `#page=${p}` : ""}`;
-  /** Send a page, the whole PDF or the selection to the AI dock, with a link back to the source. */
-  const runAi = async (tool: PdfAiTool, scope: "page" | "all" | "selection") => {
+  /** Send the selection, or some pages, to the AI dock with a link back to the source. */
+  const runAi = async (tool: PdfAiTool, scope: AiScope) => {
     if (!doc || !askAi) return;
     setAiOpen(false);
     if (!currentNote) toast("Open a note on the right to keep the answer.", { tone: "warn" });
     const name = basename(path);
-    if (scope === "selection" && sel) {
-      askAi(tool, { text: sel.text, label: `your selection on page ${sel.page} of “${name}”`, footer: `[source p.${sel.page}](${link(sel.page)})` });
+    if (scope === "selection") {
+      if (!sel) return toast("Highlight some text in the PDF first.", { tone: "warn" });
+      askAi(tool, { text: sel.text, label: `your highlighted text on page ${sel.page} of “${name}”`, footer: `[source p.${sel.page}](${link(sel.page)})` });
       window.getSelection()?.removeAllRanges();
       return setSel(null);
     }
-    if (scope === "page") {
-      const text = await doc.pageText(page);
+    const pages =
+      scope === "page" ? [page]
+      : scope === "all" ? Array.from({ length: doc.numPages }, (_, i) => i + 1)
+      : [...(picked ?? [])].sort((a, b) => a - b);
+    if (!pages.length) return toast("Tick the pages you want first.", { tone: "warn" });
+    if (pages.length === 1) {
+      const n = pages[0]!;
+      const text = await doc.pageText(n);
       if (!text.trim()) return toast("This page has no text to read. It may be a scanned image.", { tone: "warn" });
-      return askAi(tool, { text, label: `page ${page} of “${name}”`, footer: `[source p.${page}](${link(page)})` });
+      return askAi(tool, { text, label: `page ${n} of “${name}”`, footer: `[source p.${n}](${link(n)})` });
     }
     let text = "";
-    let last = 0;
-    for (let n = 1; n <= doc.numPages && text.length < MAX_AI_CHARS; n++) {
+    const sent: number[] = [];
+    for (const n of pages) {
+      if (text.length >= MAX_AI_CHARS) break;
       text += `\n\n[Page ${n}]\n${await doc.pageText(n)}`;
-      last = n;
+      sent.push(n);
     }
     text = text.slice(0, MAX_AI_CHARS).trim();
-    if (!text.replace(/\[Page \d+\]/g, "").trim()) return toast("This PDF has no text to read. It may be scanned images.", { tone: "warn" });
-    const partial = last < doc.numPages || text.length >= MAX_AI_CHARS;
+    if (!text.replace(/\[Page \d+\]/g, "").trim()) return toast("These pages have no text to read. They may be scanned images.", { tone: "warn" });
+    const cut = sent.length < pages.length || text.length >= MAX_AI_CHARS;
+    const whole = scope === "all" && !cut;
+    const what = whole ? `all of “${name}”` : `pages ${formatPages(sent)} of “${name}”`;
     askAi(tool, {
       text,
-      label: partial ? `the first ${last} pages of “${name}” (too long to send at once)` : `all of “${name}”`,
-      footer: `Source: [${name}](${link()})`,
+      label: cut ? `${what} (the rest was too long to send at once)` : what,
+      footer: whole ? `Source: [${name}](${link()})` : `Source: [${name}, pages ${formatPages(sent)}](${link(sent[0])})`,
     });
+  };
+
+  const togglePick = (n: number) =>
+    setPicked((cur) => {
+      const next = new Set(cur ?? []);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
+      return next;
+    });
+  const startPicking = () => {
+    setAiScope("pick");
+    setAiOpen(false);
+    setPicked((cur) => cur ?? new Set([page]));
+    setThumbs(true);
   };
 
   useEffect(() => {
@@ -181,14 +220,29 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         <button className="w-icon-btn" onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} aria-label="Zoom in">+</button>
         {askAi && (
           <div className="pdf-ai" ref={aiMenu}>
-            <button className="w-btn w-btn-small" aria-expanded={aiOpen} onClick={() => setAiOpen((o) => !o)} disabled={!doc}>
+            <button
+              className="w-btn w-btn-small"
+              aria-expanded={aiOpen}
+              disabled={!doc}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                if (!aiOpen && aiScope === "selection" && !sel) setAiScope("page");
+                setAiOpen((o) => !o);
+              }}
+            >
               <Icon name="sparkle" size={14} /> AI
             </button>
             {aiOpen && (
               <div className="w-popover pdf-ai-menu" role="menu">
-                <div className="w-row" role="group" aria-label="What to send">
-                  <button className="w-chip" aria-pressed={aiScope === "page"} onClick={() => setAiScope("page")}>Page {page}</button>
-                  <button className="w-chip" aria-pressed={aiScope === "all"} onClick={() => setAiScope("all")}>Whole PDF</button>
+                <div className="pdf-ai-scope" role="group" aria-label="What to send">
+                  <button className="w-chip" aria-pressed={aiScope === "page"} onClick={() => setAiScope("page")}>This page ({page})</button>
+                  <button className="w-chip" aria-pressed={aiScope === "all"} onClick={() => setAiScope("all")}>All pages</button>
+                  <button className="w-chip" aria-pressed={aiScope === "pick"} onClick={startPicking}>
+                    {picked?.size ? `Chosen pages (${picked.size})` : "Choose pages…"}
+                  </button>
+                  <button className="w-chip" aria-pressed={aiScope === "selection"} disabled={!sel} title={sel ? undefined : "Highlight text in the PDF first"} onClick={() => setAiScope("selection")}>
+                    Highlighted text
+                  </button>
                 </div>
                 {AI_TOOLS.map((t) => (
                   <button key={t.id} className="w-action" role="menuitem" onClick={() => void runAi(t.id, aiScope)}>
@@ -213,9 +267,14 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         {thumbs && doc && (
           <nav className="pdf-thumbs" aria-label="Pages">
             {Array.from({ length: doc.numPages }, (_, i) => (
-              <button key={i} className={`pdf-thumb${page === i + 1 ? " active" : ""}`} onClick={() => goTo(i + 1)}>
+              <button
+                key={i}
+                className={`pdf-thumb${page === i + 1 ? " active" : ""}${picked?.has(i + 1) ? " picked" : ""}`}
+                aria-pressed={picked ? picked.has(i + 1) : undefined}
+                onClick={() => (picked ? togglePick(i + 1) : goTo(i + 1))}
+              >
                 <PdfPage doc={doc} n={i + 1} scale={0.18} textLayer={false} />
-                <span>{i + 1}</span>
+                <span>{picked && <span className="pdf-thumb-check" aria-hidden>{picked.has(i + 1) ? "✓" : ""}</span>}{i + 1}</span>
               </button>
             ))}
           </nav>
@@ -223,22 +282,50 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         <div className="ws-scroll pdf-pages" ref={scroller} onMouseUp={onMouseUp} onScroll={() => sel && setSel(null)}>
           {error && <p className="ws-empty">{error}</p>}
           {!doc && !error && <p className="ws-empty w-muted">Opening PDF…</p>}
-          {doc && Array.from({ length: doc.numPages }, (_, i) => <PdfPage key={i} doc={doc} n={i + 1} scale={scale} cssZoom={zoom} textLayer />)}
+          {doc && Array.from({ length: doc.numPages }, (_, i) => (
+            <PdfPage key={i} doc={doc} n={i + 1} scale={scale} cssZoom={zoom} textLayer pick={picked ? { checked: picked.has(i + 1), onToggle: () => togglePick(i + 1) } : undefined} />
+          ))}
           {sel && (
             <div className="pdf-quote-btn" style={{ left: sel.x, top: sel.y - 40 }} onMouseDown={(e) => e.preventDefault()}>
               <button className="w-btn w-btn-primary w-btn-small" onClick={quote}>Quote in note</button>
               {askAi && <button className="w-btn w-btn-small" onClick={() => void runAi("explain", "selection")}>Explain</button>}
               {askAi && <button className="w-btn w-btn-small" onClick={() => void runAi("flashcards", "selection")}>Flashcards</button>}
+              {askAi && <button className="w-btn w-btn-small" onClick={() => { setAiScope("selection"); setAiOpen(true); }}>More AI…</button>}
             </div>
           )}
         </div>
       </div>
+      {picked && askAi && (
+        <div className="pdf-pick-bar" role="toolbar" aria-label="Send chosen pages to AI">
+          <span className="pdf-pick-count">
+            {picked.size ? <><b>{picked.size}</b> page{picked.size === 1 ? "" : "s"}: {formatPages([...picked].sort((a, b) => a - b))}</> : "Tick the pages you want"}
+          </span>
+          <button className="w-btn w-btn-ghost w-btn-small" onClick={() => setPicked(new Set(Array.from({ length: doc?.numPages ?? 0 }, (_, i) => i + 1)))}>All</button>
+          <button className="w-btn w-btn-ghost w-btn-small" onClick={() => setPicked(new Set())}>Clear</button>
+          <span className="pdf-pick-tools">
+            {AI_TOOLS.map((t) => (
+              <button key={t.id} className="w-btn w-btn-small" disabled={!picked.size} onClick={() => void runAi(t.id, "pick")}>{t.label}</button>
+            ))}
+          </span>
+          <button className="w-icon-btn" aria-label="Stop choosing pages" title="Done" onClick={() => { setPicked(null); setAiScope("page"); }}>
+            <Icon name="close" size={14} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 /** One page: placeholder until near the viewport, then canvas + selectable text layer. */
-function PdfPage({ doc, n, scale, cssZoom = scale, textLayer }: { doc: PdfDoc; n: number; scale: number; cssZoom?: number; textLayer: boolean }) {
+function PdfPage({ doc, n, scale, cssZoom = scale, textLayer, pick }: {
+  doc: PdfDoc;
+  n: number;
+  scale: number;
+  cssZoom?: number;
+  textLayer: boolean;
+  /** Shows a checkbox for choosing this page. */
+  pick?: { checked: boolean; onToggle: () => void };
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const [visible, setVisible] = useState(false);
@@ -263,5 +350,17 @@ function PdfPage({ doc, n, scale, cssZoom = scale, textLayer }: { doc: PdfDoc; n
 
   const w = size ? size.w * cssZoom : 600 * cssZoom;
   const h = size ? size.h * cssZoom : 800 * cssZoom;
-  return <div ref={ref} className="pdf-page-box" data-page={textLayer ? n : undefined} style={{ width: w, height: h }} aria-label={`Page ${n}`} />;
+  const box = <div ref={ref} className="pdf-page-box" data-page={textLayer ? n : undefined} style={{ width: w, height: h }} aria-label={`Page ${n}`} />;
+  if (!textLayer) return box;
+  return (
+    <div className={`pdf-page-wrap${pick?.checked ? " picked" : ""}`}>
+      {box}
+      {pick && (
+        <label className="pdf-page-check">
+          <input type="checkbox" checked={pick.checked} onChange={pick.onToggle} />
+          <span>Page {n}</span>
+        </label>
+      )}
+    </div>
+  );
 }
