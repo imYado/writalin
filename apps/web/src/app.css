@@ -69,6 +69,7 @@
 .tab-adder-menu .w-action { width: 100%; }
 .tab-adder-label { padding: 10px 10px 4px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--w-text-muted); font-weight: 600; }
 .tab-adder-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.tab-adder-sep { height: 1px; margin: 6px 4px; background: var(--w-soft); }
 .tab-adder-list li { display: flex; align-items: center; border-radius: 12px; transition: background-color var(--w-anim); }
 .tab-adder-list li:hover { background: var(--w-soft); }
 .tab-adder-item { flex: 1; min-width: 0; border: 0; background: none; text-align: left; padding: 8px 10px; font: inherit; font-size: 13px; color: var(--w-text); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -289,3 +290,7 @@
 .ai-cards li span { color: var(--w-text-muted); }
 .ai-source { font-size: 12px; }
 .w-btn-primary kbd { background: rgb(255 255 255 / 0.2); color: inherit; }
+.ai-getkey { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ai-getkey .w-btn { text-decoration: none; }
+.ai-detect { margin: -4px 0 0; color: var(--w-text-muted); }
+.ai-detect b { color: var(--w-text); font-weight: 600; }
