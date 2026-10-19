@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { VaultRecord, Vault } from "@writalin/vault";
-import { isSystemNote, tagMatches, taskDate } from "@writalin/vault";
+import { isSystemNote, tagMatches, taskDate, TASKS_PATH } from "@writalin/vault";
 import { isoDate, noteName, dirname, type VaultPath } from "@writalin/shared";
 import { Icon, toast } from "@writalin/ui";
 import { ContributionGraph, useContributions } from "@writalin/workspaces";
@@ -14,7 +14,7 @@ interface Props {
   onOpen: (path: VaultPath, opts?: { line?: number }) => void;
   onNewNote: (folder?: string) => void;
   onDelete: (path: VaultPath) => void;
-  onZone: (zone: "calendar" | "tasks" | "activity") => void;
+  onZone: (zone: "calendar" | "activity") => void;
   initialTag?: string;
 }
 
@@ -42,7 +42,7 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
     return list.filter((n) => !isSystemNote(n.path)).sort((a, b) => b.mtime - a.mtime).slice(0, tag || folder != null ? 200 : 12);
   }, [vault, version, tag, folder]);
   const dueToday = useMemo(
-    () => vault.allTasks().filter((t) => t.status === "todo" && taskDate(t) != null && taskDate(t)! <= today).sort((a, b) => (taskDate(a)! + (a.time ?? "")).localeCompare(taskDate(b)! + (b.time ?? ""))),
+    () => vault.allTasks().filter((t) => t.status === "todo" && t.path !== TASKS_PATH && taskDate(t) != null && taskDate(t)! <= today).sort((a, b) => (taskDate(a)! + (a.time ?? "")).localeCompare(taskDate(b)! + (b.time ?? ""))),
     [vault, version, today],
   );
 

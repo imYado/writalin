@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BLANK_DRAWING, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
-import { WORKSPACE_PATH, REMINDERS_PATH, TASKS_PATH, importZip, isScratch, isSystemNote, taskDate, type Vault, type VaultRecord } from "@writalin/vault";
+import { WORKSPACE_PATH, REMINDERS_PATH, importZip, isScratch, isSystemNote, taskDate, type Vault, type VaultRecord } from "@writalin/vault";
 import { basename, extname, isMarkdown, noteName, type VaultPath } from "@writalin/shared";
 import {
   ActionGrid, applyTheme, BottomBar, CommandPalette, findTheme, FocusTimer, Icon, toast, useFocusTimer,
@@ -12,6 +12,7 @@ import { Home } from "./Home";
 import { NotePane, type NotePaneHandle } from "./NotePane";
 import { PointMenu, type MenuSection } from "./PointMenu";
 import { FlashcardStudy, type StudyCard } from "./FlashcardStudy";
+import { StudySide, STUDY_TOUR, Tour, tourSeen } from "./StudySide";
 import { useNoteHost } from "./useNoteHost";
 import { SettingsModal } from "./Settings";
 import { ThemeEditor, loadCustomThemes } from "./ThemeEditor";
@@ -22,7 +23,7 @@ import { getSyncLink, runSync } from "../state/sync";
 
 const PdfWorkspace = lazy(() => import("@writalin/workspaces/pdf").then((m) => ({ default: m.PdfWorkspace })));
 
-type TabKind = "tasks" | "calendar" | "scratch" | "pdf" | "image" | "note";
+type TabKind = "start" | "tasks" | "calendar" | "scratch" | "pdf" | "image" | "note";
 interface Tab {
   id: string;
   kind: TabKind;
@@ -33,11 +34,10 @@ interface Tab {
 }
 
 /** The zones in the left rail. "note" is the open note, reached from Home or New note. */
-type Zone = "home" | "note" | "calendar" | "tasks" | "activity";
+type Zone = "home" | "note" | "calendar" | "activity";
 const ZONES: { id: Exclude<Zone, "note">; label: string; icon: IconName; hint: string }[] = [
   { id: "home", label: "Home", icon: "home", hint: "Recent notes, search, today" },
   { id: "calendar", label: "Calendar", icon: "calendar", hint: "Reminders and notes by day" },
-  { id: "tasks", label: "Tasks", icon: "checkSquare", hint: "Every checklist in one place" },
   { id: "activity", label: "Activity", icon: "activity", hint: "How much you've written" },
 ];
 
@@ -50,6 +50,7 @@ interface Layout {
 }
 
 const TAB_META: Record<TabKind, { label: string; icon: IconName }> = {
+  start: { label: "Study side", icon: "sparkle" },
   tasks: { label: "Tasks", icon: "checkSquare" },
   calendar: { label: "Calendar", icon: "calendar" },
   scratch: { label: "Scratch pad", icon: "scratch" },
@@ -81,6 +82,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const [menu, setMenu] = useState<{ kind: "selection" | "note"; x: number; y: number } | null>(null);
   const [aiRun, setAiRun] = useState<{ tool: AiTool; nonce: number; source?: AiSource }>();
   const [study, setStudy] = useState<{ cards: StudyCard[]; title: string } | null>(null);
+  const [touring, setTouring] = useState(false);
   const [themeEditor, setThemeEditor] = useState(false);
   const [customThemes, setCustomThemes] = useState<Theme[]>([]);
   const [jump, setJump] = useState<{ heading?: string; line?: number; nonce: number } | undefined>();
@@ -173,7 +175,6 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     (path: VaultPath, opts: { heading?: string; newPane?: boolean; page?: number; line?: number } = {}) => {
       if (isMarkdown(path)) {
         if (isScratch(path)) return openTab({ kind: "scratch", path });
-        if (path === TASKS_PATH) return setLayout((l) => ({ ...l, view: "tasks" }));
         if (path === REMINDERS_PATH) {
           // A reminder link from a note: show its day in the calendar.
           const id = opts.heading?.replace(/^\^/, "");
@@ -201,6 +202,13 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     async (opts: { title?: string; folder?: string } = {}) => {
       const path = await vault.createNote(opts.title ?? "Untitled", { folder: opts.folder });
       openPath(path);
+      // A new note opens with the study side beside it, so its tools are easy to find.
+      setLayout((l) => {
+        if (l.tabs.length) return { ...l, leftOpen: true };
+        const id = `start::${Date.now()}`;
+        return { ...l, tabs: [{ id, kind: "start" }], active: id, leftOpen: true };
+      });
+      if (!tourSeen() && window.innerWidth > 900) setTimeout(() => setTouring(true), 600);
     },
     [vault, openPath],
   );
@@ -356,8 +364,10 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       ...ZONES.map((z, i): Command => ({ id: `zone-${z.id}`, title: `Go to ${z.label}`, description: z.hint, icon: z.icon, group: "Go to", shortcut: `Alt+${i + 1}`, keywords: "zone open", run: () => goZone(z.id) })),
       { id: "ws-scratch", title: "New scratch pad", description: "Park a stray thought beside your note", icon: "scratch", group: "Side pane", keywords: "inbox quick", run: () => void openScratch("new") },
       { id: "ws-scratch-last", title: "Open last scratch pad", description: "Pick up the last brain dump", icon: "scratch", group: "Side pane", shortcut: "Ctrl+/", keywords: "inbox quick", run: () => void openScratch("latest") },
-      { id: "ws-task-add", title: "Add a task", description: "To the vault or to this note", icon: "checkSquare", group: "Side pane", keywords: "todo new", run: () => openTab({ kind: "tasks", focus: Date.now() }) },
-      { id: "ws-tasks", title: "Tasks beside this note", description: "Open Tasks in the side pane", icon: "split", group: "Side pane", run: () => openTab({ kind: "tasks" }) },
+      { id: "ws-task-add", title: "Add a task", description: "To this note", icon: "checkSquare", group: "Side pane", keywords: "todo new", run: () => openTab({ kind: "tasks", focus: Date.now() }) },
+      { id: "ws-start", title: "Study side", description: "PDFs, AI, tasks and more beside your note", icon: "sparkle", group: "Side pane", keywords: "help tools", run: () => openTab({ kind: "start" }) },
+      { id: "tour", title: "Take the tour", description: "A quick look at the study side, PDFs and AI", icon: "bulb", group: "Help", keywords: "help tutorial guide", run: () => { goZone("note"); openTab({ kind: "start" }); setTimeout(() => setTouring(true), 400); } },
+      { id: "ws-tasks", title: "Tasks beside this note", description: "This note's checklist in the side pane", icon: "split", group: "Side pane", run: () => openTab({ kind: "tasks" }) },
       { id: "ws-cal", title: "Calendar beside this note", description: "Open Calendar in the side pane", icon: "split", group: "Side pane", run: () => openTab({ kind: "calendar" }) },
       { id: "close-left", title: "Close side pane", description: "Back to just the note", icon: "close", group: "Side pane", run: () => setLayout((l) => ({ ...l, leftOpen: false })) },
       { id: "focus", title: focusMode ? "Leave focus mode" : "Focus mode", description: "Fade everything but the paragraph you're writing", icon: "focus", group: "Focus", shortcut: "Ctrl+.", run: () => setFocusMode((f) => !f) },
@@ -572,6 +582,21 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
 
   const renderTab = (t: Tab) => {
     switch (t.kind) {
+      case "start":
+        return (
+          <StudySide
+            vault={vault}
+            version={version}
+            onUploadPdf={() => pdfInput.current?.click()}
+            onOpenPdf={(path) => openTab({ kind: "pdf", path })}
+            onAi={() => setDockOpen("ai")}
+            onTasks={() => openTab({ kind: "tasks", focus: Date.now() })}
+            onScratch={() => void openScratch("new")}
+            onCalendar={() => openTab({ kind: "calendar" })}
+            onImport={() => fileInput.current?.click()}
+            onTour={() => setTouring(true)}
+          />
+        );
       case "tasks": return <TasksWorkspace {...wsProps} focusAdd={t.focus} />;
       case "calendar": return <CalendarWorkspace {...wsProps} />;
       case "scratch": return t.path ? <ScratchpadWorkspace {...wsProps} host={host} path={t.path} onDeleted={() => closeTab(t.id)} /> : null;
@@ -662,7 +687,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             )}
             {zone === "note" && (
               <>
-                <button className="w-icon-btn topbar-desk" aria-pressed={showLeft} onClick={() => (layout.tabs.length ? setLayout((l) => ({ ...l, leftOpen: !l.leftOpen })) : openTab({ kind: "tasks" }))} aria-label="Side pane" title="Side pane">
+                <button className="w-icon-btn topbar-desk" aria-pressed={showLeft} onClick={() => (layout.tabs.length ? setLayout((l) => ({ ...l, leftOpen: !l.leftOpen })) : openTab({ kind: "start" }))} aria-label="Side pane" title="Study side: PDFs, AI, tasks">
                   <Icon name="split" />
                 </button>
                 <button className="w-icon-btn topbar-desk" aria-pressed={outlineOpen} onClick={() => setOutlineOpen((o) => !o)} aria-label="Outline" title="Outline (Ctrl+Shift+O)">
@@ -698,17 +723,6 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             />
           )}
           {zone === "calendar" && <div className="zone-full"><CalendarWorkspace {...wsProps} standalone focusDate={calFocus} /></div>}
-          {zone === "tasks" && (
-            <div className="zone-full zone-narrow">
-              <header className="zone-head zone-head-pad">
-                <div>
-                  <h1>Tasks</h1>
-                  <p className="w-muted">Vault tasks and each note's own.</p>
-                </div>
-              </header>
-              <TasksWorkspace {...wsProps} currentNote={null} />
-            </div>
-          )}
           {zone === "activity" && <ActivityWorkspace {...wsProps} />}
           {zone === "note" && layout.note && (
             <div className={`split${showLeft ? " split-open" : ""}`}>
@@ -736,6 +750,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
                     vault={vault}
                     onTasks={(focus) => openTab({ kind: "tasks", focus: focus ? Date.now() : undefined })}
                     onCalendar={() => openTab({ kind: "calendar" })}
+                    onStart={() => openTab({ kind: "start" })}
                     onPdf={(path) => (path ? openTab({ kind: "pdf", path }) : pdfInput.current?.click())}
                     onScratch={(path) => (path ? openTab({ kind: "scratch", path }) : void openScratch("new"))}
                     onDeleteScratch={(path) => {
@@ -780,6 +795,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       </div>
 
       {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} />}
+      {touring && <Tour steps={STUDY_TOUR} onClose={() => setTouring(false)} />}
       {menu && <PointMenu x={menu.x} y={menu.y} label={menu.kind === "note" ? "Note" : "Selected text"} sections={menu.kind === "note" ? noteMenu : selectionMenu} onClose={() => setMenu(null)} />}
       {paletteOpen && <CommandPalette open onClose={() => setPaletteOpen(false)} commands={commands} />}
       {settingsOpen && (
@@ -817,8 +833,9 @@ function findThemes(custom: Theme[]): Theme[] {
 }
 
 /** The side pane's + menu: add a task, open Tasks or Calendar, or a scratch pad (new or existing). */
-function TabAdder({ vault, onTasks, onCalendar, onPdf, onScratch, onDeleteScratch }: {
+function TabAdder({ vault, onStart, onTasks, onCalendar, onPdf, onScratch, onDeleteScratch }: {
   vault: Vault;
+  onStart: () => void;
   onTasks: (focusAdd: boolean) => void;
   onCalendar: () => void;
   /** Open this PDF beside the note, or with no path, upload one. */
@@ -849,6 +866,10 @@ function TabAdder({ vault, onTasks, onCalendar, onPdf, onScratch, onDeleteScratc
       </button>
       {open && (
         <div className="w-popover tab-adder-menu" role="menu">
+          <button className="w-action" role="menuitem" onClick={pick(onStart)}>
+            <Icon name="sparkle" size={16} />
+            <span className="w-action-text"><span className="w-action-label">Study side</span><span className="w-action-desc">Every tool, with tips</span></span>
+          </button>
           <button className="w-action" role="menuitem" onClick={pick(() => onPdf())}>
             <Icon name="pdf" size={16} />
             <span className="w-action-text"><span className="w-action-label">PDF</span><span className="w-action-desc">Upload one to read here</span></span>
@@ -868,11 +889,11 @@ function TabAdder({ vault, onTasks, onCalendar, onPdf, onScratch, onDeleteScratc
           )}
           <button className="w-action" role="menuitem" onClick={pick(() => onTasks(true))}>
             <Icon name="plus" size={16} />
-            <span className="w-action-text"><span className="w-action-label">New task</span><span className="w-action-desc">For the vault or this note</span></span>
+            <span className="w-action-text"><span className="w-action-label">New task</span><span className="w-action-desc">For this note</span></span>
           </button>
           <button className="w-action" role="menuitem" onClick={pick(() => onTasks(false))}>
             <Icon name="checkSquare" size={16} />
-            <span className="w-action-text"><span className="w-action-label">Tasks</span><span className="w-action-desc">Vault and note checklists</span></span>
+            <span className="w-action-text"><span className="w-action-label">Tasks</span><span className="w-action-desc">This note's checklist</span></span>
           </button>
           <button className="w-action" role="menuitem" onClick={pick(onCalendar)}>
             <Icon name="calendar" size={16} />

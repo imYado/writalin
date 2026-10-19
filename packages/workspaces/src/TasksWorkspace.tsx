@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Task } from "@writalin/shared";
 import { isoDate, addDays, noteName } from "@writalin/shared";
-import { taskDate, tagMatches, formatTaskLine, REMINDERS_PATH, TASKS_PATH, isScratch } from "@writalin/vault";
+import { taskDate, tagMatches, formatTaskLine } from "@writalin/vault";
 import { Icon, toast } from "@writalin/ui";
 import type { WorkspaceProps } from "./types";
 import { removeWithUndo } from "./undo";
 
 type Group = "Overdue" | "Today" | "Upcoming" | "No date" | "Done";
-/** All tasks, the vault-wide list (Tasks.md), or just the open note's. */
-type Scope = "all" | "vault" | "note";
 
 function groupOf(t: Task, today: string): Group {
   if (t.status === "done") return "Done";
@@ -20,97 +18,64 @@ function groupOf(t: Task, today: string): Group {
 }
 
 /**
- * Vault-wide tasks (kept in Tasks.md) and each note's own checklist, as
- * cards. Checking or deleting one updates the file it lives in.
+ * The open note's checklist, as cards. Tasks always belong to a note: adding
+ * one appends `- [ ]` to the note, and checking or deleting one edits it there.
  * `focusAdd` changing puts the cursor in the "Add a task" box.
  */
-export function TasksWorkspace({ vault, version, openNote, currentNote, appendToNote, flushNote, focusAdd }: WorkspaceProps & { focusAdd?: number }) {
-  const [scope, setScope] = useState<Scope>(currentNote ? "note" : "all");
+export function TasksWorkspace({ vault, version, currentNote, appendToNote, flushNote, focusAdd }: WorkspaceProps & { focusAdd?: number }) {
   const [tag, setTag] = useState("");
   const [showDone, setShowDone] = useState(false);
   const [draft, setDraft] = useState("");
   const [draftDate, setDraftDate] = useState("");
-  const [target, setTarget] = useState<"vault" | "note">(currentNote ? "note" : "vault");
-  /** Without an open note (the Tasks zone), pick which note "This note" means. */
-  const [picked, setPicked] = useState("");
-  const note = currentNote ?? (picked || null);
   const input = useRef<HTMLInputElement>(null);
   const today = isoDate();
 
   useEffect(() => {
     if (focusAdd) input.current?.focus();
   }, [focusAdd]);
-  useEffect(() => {
-    if (!note) {
-      setScope((s) => (s === "note" ? "all" : s));
-      setTarget("vault");
-    }
-  }, [note]);
 
-  // Reminders live in the Calendar; scratch pads aren't task lists.
-  const tasks = useMemo(() => vault.allTasks().filter((t) => t.path !== REMINDERS_PATH && !isScratch(t.path)), [vault, version]);
+  const tasks = useMemo(() => (currentNote ? vault.allTasks().filter((t) => t.path === currentNote) : []), [vault, version, currentNote]);
   const tags = useMemo(() => [...new Set(tasks.flatMap((t) => t.tags.map((x) => x.toLowerCase())))].sort(), [tasks]);
-  const notes = useMemo(() => [...vault.notes.values()].filter((n) => n.path !== TASKS_PATH && n.path !== REMINDERS_PATH && !isScratch(n.path)).map((n) => n.path).sort((a, b) => noteName(a).localeCompare(noteName(b))), [vault, version]);
-  const counts = {
-    all: tasks.filter((t) => t.status === "todo").length,
-    vault: tasks.filter((t) => t.status === "todo" && t.path === TASKS_PATH).length,
-    note: tasks.filter((t) => t.status === "todo" && t.path === note).length,
-  };
+  const open = tasks.filter((t) => t.status === "todo").length;
 
-  const inScope = (t: Task) => scope === "all" || (scope === "vault" ? t.path === TASKS_PATH : t.path === note);
-  const filtered = tasks.filter((t) => inScope(t) && (!tag || t.tags.some((x) => tagMatches(x, tag))));
+  const filtered = tasks.filter((t) => !tag || t.tags.some((x) => tagMatches(x, tag)));
   const groups = new Map<Group, Task[]>();
   for (const g of ["Overdue", "Today", "Upcoming", "No date", "Done"] as Group[]) groups.set(g, []);
   for (const t of filtered) groups.get(groupOf(t, today))!.push(t);
   for (const list of groups.values()) list.sort((a, b) => (taskDate(a) ?? "9999").localeCompare(taskDate(b) ?? "9999") || (a.time ?? "").localeCompare(b.time ?? ""));
 
-  /** Save the open note first, so a change to its file doesn't race the editor. */
-  const settle = async (t: Task) => {
-    if (t.path === currentNote) await flushNote?.();
-  };
+  /** Save the note first, so a change to its file doesn't race the editor. */
   const toggle = async (t: Task) => {
-    await settle(t);
+    await flushNote?.();
     await vault.toggleTask(t).catch((e) => toast((e as Error).message, { tone: "warn" }));
   };
   const remove = async (t: Task) => {
-    await settle(t);
+    await flushNote?.();
     await removeWithUndo(vault, t.path, "Task", () => vault.deleteTask(t));
   };
 
   const add = async () => {
-    if (!draft.trim()) return;
+    if (!draft.trim() || !currentNote) return;
     const line = formatTaskLine({ text: draft, due: draftDate || undefined, tags: tag ? [tag] : [] });
-    if (target === "note" && note) {
-      if (note === currentNote && appendToNote) appendToNote(line);
-      else await vault.append(note, line);
-    } else await vault.appendTo(TASKS_PATH, line);
+    if (appendToNote) appendToNote(line);
+    else await vault.append(currentNote, line);
     setDraft("");
     setDraftDate("");
     input.current?.focus();
   };
 
-  const scopes: { id: Scope; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "vault", label: "Vault" },
-    ...(note ? [{ id: "note" as const, label: currentNote ? "This note" : noteName(note) }] : []),
-  ];
+  if (!currentNote) {
+    return (
+      <div className="ws ws-tasks">
+        <p className="w-muted ws-empty">Tasks belong to a note. Open a note to see and add its tasks.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="ws ws-tasks">
       <div className="ws-toolbar">
-        <div className="w-row" role="group" aria-label="Which tasks">
-          {scopes.map((s) => (
-            <button key={s.id} className="w-chip" aria-pressed={scope === s.id} onClick={() => { setScope(s.id); if (s.id !== "all") setTarget(s.id); }}>
-              {s.label} <span className="w-muted">{counts[s.id]}</span>
-            </button>
-          ))}
-        </div>
-        {!currentNote && (
-          <select className="w-input" value={picked} onChange={(e) => { setPicked(e.target.value); setScope(e.target.value ? "note" : "all"); setTarget(e.target.value ? "note" : "vault"); }} aria-label="A note's tasks">
-            <option value="">Pick a note…</option>
-            {notes.map((p) => <option key={p} value={p}>{noteName(p)}</option>)}
-          </select>
-        )}
+        <span className="ws-title">Tasks in “{noteName(currentNote)}” <span className="w-muted">{open}</span></span>
         {tags.length > 0 && (
           <select className="w-input" value={tag} onChange={(e) => setTag(e.target.value)} aria-label="Filter by tag">
             <option value="">All tags</option>
@@ -124,22 +89,12 @@ export function TasksWorkspace({ vault, version, openNote, currentNote, appendTo
         </label>
       </div>
       <form className="ws-quick-add" onSubmit={(e) => { e.preventDefault(); void add(); }}>
-        <input ref={input} className="w-input" placeholder="Add a task…" value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="New task" />
+        <input ref={input} className="w-input" placeholder="Add a task to this note…" value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="New task" />
         <input className="w-input" type="date" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} aria-label="Due date" />
-        {note && (
-          <select className="w-input" value={target} onChange={(e) => setTarget(e.target.value as "vault" | "note")} aria-label="Add to">
-            <option value="vault">To vault</option>
-            <option value="note">{currentNote ? "To this note" : `To ${noteName(note)}`}</option>
-          </select>
-        )}
         <button className="w-btn w-btn-primary" disabled={!draft.trim()}><Icon name="plus" size={14} /> Add</button>
       </form>
       <div className="ws-scroll">
-        {filtered.length === 0 && (
-          <p className="w-muted ws-empty">
-            {scope === "note" ? "No tasks in this note yet. Add one above, or type - [ ] in the note." : scope === "vault" ? "No vault tasks yet. They belong to no single note." : "No tasks yet. Add one above."}
-          </p>
-        )}
+        {filtered.length === 0 && <p className="w-muted ws-empty">No tasks in this note yet. Add one above, or type - [ ] in the note.</p>}
         {[...groups].map(([g, list]) => {
           if (g === "Done" && !showDone) return null;
           if (!list.length) return null;
@@ -155,11 +110,6 @@ export function TasksWorkspace({ vault, version, openNote, currentNote, appendTo
                       <div className="task-meta">
                         {taskDate(t) && <span className={taskDate(t)! < today && t.status !== "done" ? "task-late" : ""}>{friendlyDate(taskDate(t)!, today)}{t.time ? ` · ${t.time}` : ""}</span>}
                         {t.tags.map((x) => <span key={x} className="task-tag">#{x}</span>)}
-                        {t.path === TASKS_PATH ? (
-                          <span className="task-scope">Vault</span>
-                        ) : (
-                          <button className="task-source" onClick={() => openNote(t.path, { line: t.line })}>{noteName(t.path)}</button>
-                        )}
                       </div>
                     </div>
                     <button className="task-delete" onClick={() => void remove(t)} aria-label={`Delete task: ${t.text}`} title="Delete task">
