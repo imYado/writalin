@@ -17,3 +17,40 @@ export function parseFlashcards(body: string, path: VaultPath, lineOffset = 0): 
   });
   return out;
 }
+
+/**
+ * Cards from an AI answer, which may number them, bold them or wrap them in
+ * bullets. Keeps `Question :: Answer` lines and also accepts `Q: … A: …` pairs.
+ */
+export function cardsFromText(text: string): { question: string; answer: string }[] {
+  const clean = (s: string) => s.replace(/\*\*|__/g, "").replace(/\s+/g, " ").trim();
+  const out: { question: string; answer: string }[] = [];
+  let pendingQ: string | null = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|>\s*)*/, "").trim();
+    if (!line || /^```/.test(line)) continue;
+    const sep = line.indexOf("::");
+    if (sep > 0) {
+      const question = clean(line.slice(0, sep));
+      const answer = clean(line.slice(sep + 2));
+      if (question && answer) out.push({ question, answer });
+      pendingQ = null;
+      continue;
+    }
+    const q = /^(?:\*\*)?(?:Q|Question)(?:\*\*)?\s*[:.]\s*(.+)$/i.exec(line);
+    const a = /^(?:\*\*)?(?:A|Answer)(?:\*\*)?\s*[:.]\s*(.+)$/i.exec(line);
+    if (q) pendingQ = clean(q[1]!);
+    else if (a && pendingQ) {
+      out.push({ question: pendingQ, answer: clean(a[1]!) });
+      pendingQ = null;
+    }
+  }
+  return out;
+}
+
+/** Cards as lines the note (and Obsidian's Spaced Repetition plugin) understands. */
+export function formatCards(cards: { question: string; answer: string }[]): string {
+  // `::` inside a side would split the card in the wrong place.
+  const side = (s: string) => s.replace(/::/g, ":").trim();
+  return cards.map((c) => `${side(c.question)} :: ${side(c.answer)}`).join("\n");
+}

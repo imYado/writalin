@@ -11,16 +11,18 @@ import { AiPanel } from "./AiPanel";
 import { Home } from "./Home";
 import { NotePane, type NotePaneHandle } from "./NotePane";
 import { PointMenu, type MenuSection } from "./PointMenu";
+import { FlashcardStudy, type StudyCard } from "./FlashcardStudy";
 import { useNoteHost } from "./useNoteHost";
 import { SettingsModal } from "./Settings";
 import { ThemeEditor, loadCustomThemes } from "./ThemeEditor";
 import { exportNote, exportVaultZip, importTarget } from "../export";
 import type { Account, AiTool } from "../api";
+import type { AiSource } from "./AiPanel";
 import { getSyncLink, runSync } from "../state/sync";
 
 const PdfWorkspace = lazy(() => import("@writalin/workspaces/pdf").then((m) => ({ default: m.PdfWorkspace })));
 
-type TabKind = "tasks" | "calendar" | "scratch" | "pdf" | "image" | "note" | "graph";
+type TabKind = "tasks" | "calendar" | "scratch" | "pdf" | "image" | "note";
 interface Tab {
   id: string;
   kind: TabKind;
@@ -54,7 +56,6 @@ const TAB_META: Record<TabKind, { label: string; icon: IconName }> = {
   pdf: { label: "PDF", icon: "pdf" },
   image: { label: "Image", icon: "image" },
   note: { label: "Note", icon: "file" },
-  graph: { label: "Graph", icon: "graph" },
 };
 
 interface Props {
@@ -78,7 +79,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const [dockOpen, setDockOpen] = useState<string | null>(null);
   /** The right-click menu on selected text, or the note's ⋯ menu. */
   const [menu, setMenu] = useState<{ kind: "selection" | "note"; x: number; y: number } | null>(null);
-  const [aiRun, setAiRun] = useState<{ tool: AiTool; nonce: number }>();
+  const [aiRun, setAiRun] = useState<{ tool: AiTool; nonce: number; source?: AiSource }>();
+  const [study, setStudy] = useState<{ cards: StudyCard[]; title: string } | null>(null);
   const [themeEditor, setThemeEditor] = useState(false);
   const [customThemes, setCustomThemes] = useState<Theme[]>([]);
   const [jump, setJump] = useState<{ heading?: string; line?: number; nonce: number } | undefined>();
@@ -110,7 +112,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       if (l) {
         const note = l.note && vault.files.has(l.note) ? l.note : null;
         const view = ZONES.some((z) => z.id === l.view) || (l.view === "note" && note) ? l.view : "home";
-        l.tabs = (l.tabs ?? []).filter((t) => t.kind !== "scratch" || (t.path && vault.files.has(t.path)));
+        // Drop tabs whose kind no longer exists (an old graph tab) or whose scratch pad was deleted.
+        l.tabs = (l.tabs ?? []).filter((t) => t.kind in TAB_META && (t.kind !== "scratch" || (t.path && vault.files.has(t.path))));
         setLayout({ ...l, note, view });
       }
       layoutLoaded.current = true;
@@ -358,6 +361,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       { id: "timer-start", title: "Start focus timer", description: `${settings.timerMinutes} minutes, then a ${settings.breakMinutes}-minute break`, icon: "play", group: "Focus", keywords: "pomodoro", run: () => timer.dispatch({ type: "start" }) },
       { id: "timer-pause", title: "Pause focus timer", description: "Pick it up again whenever", icon: "pause", group: "Focus", run: () => timer.dispatch({ type: "pause" }) },
       { id: "timer-reset", title: "Stop focus timer", description: "Reset to the start", icon: "reset", group: "Focus", run: () => timer.dispatch({ type: "reset" }) },
+      { id: "study-all", title: "Study all flashcards", description: "Every Question :: Answer card in the vault", icon: "play", group: "Study", keywords: "flashcards review quiz cards", run: () => { const cards = [...vault.notes.values()].flatMap((n) => n.flashcards); if (cards.length) setStudy({ cards, title: "All flashcards" }); else toast("No flashcards yet. Write Question :: Answer on a line, or ask the AI to make some."); } },
       { id: "ai", title: "AI study helper", description: "Explain, summarize, flashcards, quiz, next steps", icon: "sparkle", group: "AI", keywords: "explain summarize flashcards quiz steps where was i", run: () => { goZone("note"); setTimeout(() => setDockOpen("ai"), 60); } },
       { id: "print", title: printLayout ? "Hide page breaks" : "Show page breaks", description: "See where A4 pages end when printed", icon: "printer", group: "View", keywords: "print layout", run: () => setPrintLayout((p) => !p) },
       { id: "outline", title: outlineOpen ? "Hide outline" : "Show outline", description: "Headings of this note, to jump around", icon: "list", group: "View", shortcut: "Ctrl+Shift+O", run: () => setOutlineOpen((o) => !o) },
@@ -372,6 +376,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     ];
     if (layout.note) {
       const p = layout.note;
+      const cards = vault.notes.get(p)?.flashcards ?? [];
+      if (cards.length) list.push({ id: "study-note", title: "Study flashcards in this note", description: `${cards.length} card${cards.length === 1 ? "" : "s"}`, icon: "play", group: "Study", keywords: "flashcards review", run: () => setStudy({ cards, title: noteName(p) }) });
       list.push(
         { id: "export-pdf", title: "Export note as PDF", description: "A4, ready to print or hand in", icon: "printer", group: "Import and export", run: () => void exportNote(vault, p, "pdf") },
         { id: "export-md", title: "Export note as Markdown", description: "The .md file as it is", icon: "file", group: "Import and export", run: () => void exportNote(vault, p, "md") },
@@ -459,6 +465,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           insert={(md) => ed()?.insert(md, { block: true })}
           onOpenSettings={() => { setDockOpen(null); setSettingsOpen("ai"); }}
           autoRun={aiRun}
+          onStudy={(cards) => setStudy({ cards, title: "Study the new cards" })}
         />
       ),
     },
@@ -484,8 +491,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     },
   ];
 
-  const askAi = (tool: AiTool) => {
-    setAiRun({ tool, nonce: Date.now() });
+  const askAi = (tool: AiTool, source?: AiSource) => {
+    setAiRun({ tool, nonce: Date.now(), source });
     setDockOpen("ai");
   };
   /** Turn the selection into a note of its own, leaving a link where it was. */
@@ -529,6 +536,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       ],
     },
   ];
+  const noteCards = (layout.note && vault.notes.get(layout.note)?.flashcards) || [];
   const noteMenu: MenuSection[] = layout.note
     ? [
         {
@@ -539,6 +547,9 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             { label: "Web page", icon: "file", onClick: () => void exportNote(vault, layout.note!, "html") },
           ],
         },
+        ...(noteCards.length
+          ? [{ items: [{ label: `Study ${noteCards.length} flashcard${noteCards.length === 1 ? "" : "s"}`, icon: "play" as IconName, onClick: () => setStudy({ cards: noteCards, title: noteName(layout.note!) }) }] }]
+          : []),
         { items: [{ label: "Delete note", icon: "trash", danger: true, onClick: () => void deleteNote(layout.note!) }] },
       ]
     : [];
@@ -552,6 +563,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     appendToNote,
     flushNote: async () => { await pane.current?.flush(); },
     quality,
+    askAi: (tool, source) => askAi(tool, source),
   };
   const activeTab = layout.tabs.find((t) => t.id === layout.active) ?? layout.tabs[layout.tabs.length - 1];
 
@@ -568,7 +580,6 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             <PdfWorkspace {...wsProps} path={t.path!} page={t.page} />
           </Suspense>
         );
-      case "graph": return <div className="ws ws-empty w-muted">The graph view is coming in a later update.</div>;
     }
   };
 
@@ -764,6 +775,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         {zone === "note" && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
       </div>
 
+      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} />}
       {menu && <PointMenu x={menu.x} y={menu.y} label={menu.kind === "note" ? "Note" : "Selected text"} sections={menu.kind === "note" ? noteMenu : selectionMenu} onClose={() => setMenu(null)} />}
       {paletteOpen && <CommandPalette open onClose={() => setPaletteOpen(false)} commands={commands} />}
       {settingsOpen && (

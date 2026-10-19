@@ -16,4 +16,6 @@ export interface WorkspaceProps {
   /** Save the open note now, before changing its file from outside the editor. */
   flushNote?: () => Promise<void>;
   quality: "low" | "medium" | "high";
+  /** Run an AI study tool on text from this workspace; the answer shows in the AI dock. */
+  askAi?: (tool: "summarize" | "flashcards" | "explain" | "quiz" | "mainpoint", source: { text: string; label: string; footer?: string }) => void;
 }

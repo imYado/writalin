@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { VaultPath } from "@writalin/shared";
 import { basename } from "@writalin/shared";
 import { pdfQuote } from "@writalin/vault";
-import { toast } from "@writalin/ui";
+import { Icon, toast } from "@writalin/ui";
 import type { WorkspaceProps } from "./types";
 import { loadPdf, type PdfDoc } from "./pdf";
 
@@ -17,7 +17,18 @@ interface Props extends WorkspaceProps {
  * thumbnails. Selecting text offers "Quote in note", which drops a quote with
  * a link back to the exact page.
  */
-export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, quality, currentNote }: Props) {
+type PdfAiTool = Parameters<NonNullable<WorkspaceProps["askAi"]>>[0];
+const AI_TOOLS: { id: PdfAiTool; label: string }[] = [
+  { id: "summarize", label: "Summarize" },
+  { id: "flashcards", label: "Flashcards" },
+  { id: "explain", label: "Explain simply" },
+  { id: "mainpoint", label: "Main point" },
+  { id: "quiz", label: "Quiz me" },
+];
+/** Matches the server's limit on how much text one request may send. */
+const MAX_AI_CHARS = 58_000;
+
+export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, quality, currentNote, askAi }: Props) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -27,6 +38,49 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   const [hits, setHits] = useState<number[]>([]);
   const [sel, setSel] = useState<{ text: string; page: number; x: number; y: number } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiScope, setAiScope] = useState<"page" | "all">("page");
+  const aiMenu = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!aiOpen) return;
+    const onDown = (e: PointerEvent) => { if (!aiMenu.current?.contains(e.target as Node)) setAiOpen(false); };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [aiOpen]);
+
+  const link = (p?: number) => `${path.replace(/ /g, "%20")}${p ? `#page=${p}` : ""}`;
+  /** Send a page, the whole PDF or the selection to the AI dock, with a link back to the source. */
+  const runAi = async (tool: PdfAiTool, scope: "page" | "all" | "selection") => {
+    if (!doc || !askAi) return;
+    setAiOpen(false);
+    if (!currentNote) toast("Open a note on the right to keep the answer.", { tone: "warn" });
+    const name = basename(path);
+    if (scope === "selection" && sel) {
+      askAi(tool, { text: sel.text, label: `your selection on page ${sel.page} of “${name}”`, footer: `[source p.${sel.page}](${link(sel.page)})` });
+      window.getSelection()?.removeAllRanges();
+      return setSel(null);
+    }
+    if (scope === "page") {
+      const text = await doc.pageText(page);
+      if (!text.trim()) return toast("This page has no text to read. It may be a scanned image.", { tone: "warn" });
+      return askAi(tool, { text, label: `page ${page} of “${name}”`, footer: `[source p.${page}](${link(page)})` });
+    }
+    let text = "";
+    let last = 0;
+    for (let n = 1; n <= doc.numPages && text.length < MAX_AI_CHARS; n++) {
+      text += `\n\n[Page ${n}]\n${await doc.pageText(n)}`;
+      last = n;
+    }
+    text = text.slice(0, MAX_AI_CHARS).trim();
+    if (!text.replace(/\[Page \d+\]/g, "").trim()) return toast("This PDF has no text to read. It may be scanned images.", { tone: "warn" });
+    const partial = last < doc.numPages || text.length >= MAX_AI_CHARS;
+    askAi(tool, {
+      text,
+      label: partial ? `the first ${last} pages of “${name}” (too long to send at once)` : `all of “${name}”`,
+      footer: `Source: [${name}](${link()})`,
+    });
+  };
 
   useEffect(() => {
     let alive = true;
@@ -125,6 +179,27 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         <button className="w-icon-btn" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} aria-label="Zoom out">−</button>
         <span className="w-muted">{Math.round(zoom * 100)}%</span>
         <button className="w-icon-btn" onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} aria-label="Zoom in">+</button>
+        {askAi && (
+          <div className="pdf-ai" ref={aiMenu}>
+            <button className="w-btn w-btn-small" aria-expanded={aiOpen} onClick={() => setAiOpen((o) => !o)} disabled={!doc}>
+              <Icon name="sparkle" size={14} /> AI
+            </button>
+            {aiOpen && (
+              <div className="w-popover pdf-ai-menu" role="menu">
+                <div className="w-row" role="group" aria-label="What to send">
+                  <button className="w-chip" aria-pressed={aiScope === "page"} onClick={() => setAiScope("page")}>Page {page}</button>
+                  <button className="w-chip" aria-pressed={aiScope === "all"} onClick={() => setAiScope("all")}>Whole PDF</button>
+                </div>
+                {AI_TOOLS.map((t) => (
+                  <button key={t.id} className="w-action" role="menuitem" onClick={() => void runAi(t.id, aiScope)}>
+                    <span className="w-action-label">{t.label}</span>
+                  </button>
+                ))}
+                <p className="w-muted w-small">The answer opens in the AI panel, ready to add to your note with a link back here.</p>
+              </div>
+            )}
+          </div>
+        )}
         <form className="pdf-search" onSubmit={(e) => { e.preventDefault(); void search(); }}>
           <input className="w-input" placeholder="Search PDF" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search in PDF" />
           {hits.length > 0 && (
@@ -150,9 +225,11 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
           {!doc && !error && <p className="ws-empty w-muted">Opening PDF…</p>}
           {doc && Array.from({ length: doc.numPages }, (_, i) => <PdfPage key={i} doc={doc} n={i + 1} scale={scale} cssZoom={zoom} textLayer />)}
           {sel && (
-            <button className="w-btn w-btn-primary w-btn-small pdf-quote-btn" style={{ left: sel.x, top: sel.y - 40 }} onMouseDown={(e) => e.preventDefault()} onClick={quote}>
-              Quote in note
-            </button>
+            <div className="pdf-quote-btn" style={{ left: sel.x, top: sel.y - 40 }} onMouseDown={(e) => e.preventDefault()}>
+              <button className="w-btn w-btn-primary w-btn-small" onClick={quote}>Quote in note</button>
+              {askAi && <button className="w-btn w-btn-small" onClick={() => void runAi("explain", "selection")}>Explain</button>}
+              {askAi && <button className="w-btn w-btn-small" onClick={() => void runAi("flashcards", "selection")}>Flashcards</button>}
+            </div>
           )}
         </div>
       </div>

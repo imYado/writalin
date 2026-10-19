@@ -18,7 +18,7 @@ export interface AiAccount {
 export const AI_TOOLS = {
   explain: "Explain the text below in plain, simple words, as if to a smart student new to the topic. Use a short intro sentence, then a few bullet points, then one everyday example.",
   summarize: "Summarize the text below. Start with one bold sentence that says the main idea, then 3 to 6 short bullet points with the key details. Keep the student's terms.",
-  flashcards: "Make study flashcards from the text below. Output only flashcard lines in the form `Question :: Answer`, one per line, 5 to 12 cards. Questions should test understanding, not trivia. Answers stay short.",
+  flashcards: "Make study flashcards from the text below. Output ONLY card lines, one per line, exactly in the form `Question :: Answer`, with a space on each side of `::`. No title, numbering, bullets, bold or blank lines. Make 6 to 15 cards covering the most important ideas, definitions, causes and processes. Each question is a clear, specific question ending in `?` that tests understanding, not trivia. Each answer is short: a few words or one sentence. Never use `::` inside a question or answer.",
   quiz: "Write a short quiz on the text below: 5 questions, mixing multiple choice and short answer. Put the answers at the end inside a collapsed callout:\n> [!success]- Answers\n> 1. ...",
   steps: "Break the task or text below into small, concrete next steps that each take 5 to 25 minutes. Output a Markdown checklist (`- [ ] step`), 3 to 8 items, starting with the easiest way to begin.",
   mainpoint: "In one or two sentences, what is the main point of the text below? No preamble.",
