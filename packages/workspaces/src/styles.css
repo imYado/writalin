@@ -156,10 +156,6 @@
 .pdf-page-box { position: relative; background: #fff; box-shadow: var(--w-shadow); border-radius: 4px; flex: none; }
 .pdf-page-box canvas { display: block; border-radius: 4px; }
 .pdf-quote-btn { position: absolute; transform: translateX(-50%); z-index: 10; display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--w-surface); box-shadow: var(--w-shadow-lg); white-space: nowrap; }
-.pdf-ai { position: relative; }
-.pdf-ai-menu { top: calc(100% + 6px); left: 0; width: 240px; display: flex; flex-direction: column; gap: 4px; padding: 10px; }
-.pdf-ai-menu .w-action { width: 100%; padding: 8px 10px; }
-.pdf-ai-menu p { margin: 4px 2px 0; }
 
 /* Image */
 .ws-image-stage { padding: 16px; display: flex; justify-content: center; align-items: flex-start; background: var(--w-bg); }
@@ -184,8 +180,6 @@
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .stat { padding: 12px 14px; }
 }
-.pdf-ai-menu { width: 270px; left: auto; right: 0; }
-.pdf-ai-scope { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
 .pdf-page-wrap { position: relative; flex: none; border-radius: 6px; outline: 3px solid transparent; outline-offset: 3px; transition: outline-color var(--w-anim); }
 .pdf-page-wrap.picked { outline-color: var(--w-accent); }
 .pdf-page-check { position: absolute; top: 10px; left: 10px; z-index: 5; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: var(--w-surface); box-shadow: var(--w-shadow); font-size: 12px; font-weight: 600; cursor: pointer; user-select: none; }

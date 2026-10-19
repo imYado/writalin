@@ -23,6 +23,8 @@ interface Props {
   getSource: (tool: AiTool) => AiSource | null;
   /** What's open in the side pane (a PDF), offered as something else to read. */
   workspace?: WorkspaceAiSource | null;
+  /** Switch to reading the side-pane workspace at this scope (its own AI button). */
+  focusWorkspace?: { scope: string; nonce: number };
   /** False when no note is open to put the answer in. */
   canInsert: boolean;
   insert: (markdown: string) => void;
@@ -34,7 +36,10 @@ interface Props {
 }
 
 /** The AI dock panel. Opt-in, signed-in only; the key is used on the server, never here. */
-export function AiPanel({ vault, account, getSource, workspace, canInsert, insert, onOpenSettings, autoRun, onStudy }: Props) {
+/** The last `focusWorkspace` request applied, so reopening the panel later doesn't repeat it. */
+let appliedFocus = 0;
+
+export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, onOpenSettings, autoRun, onStudy }: Props) {
   const [enabled, setEnabled] = useState(vault.settings.aiEnabled);
   const [state, setState] = useState<AiState | null>(null);
   const [busy, setBusy] = useState<AiTool | null>(null);
@@ -47,6 +52,14 @@ export function AiPanel({ vault, account, getSource, workspace, canInsert, inser
   const [use, setUse] = useState<"note" | "workspace">(() => (workspace && !getSource("summarize")?.text.trim() ? "workspace" : "note"));
   const [scope, setScope] = useState(workspace?.defaultScope ?? "page");
   const [asked, setAsked] = useState("");
+  useEffect(() => {
+    if (!focusWorkspace || focusWorkspace.nonce === appliedFocus || !workspace) return;
+    appliedFocus = focusWorkspace.nonce;
+    setPinned(null);
+    setUse("workspace");
+    setScope(focusWorkspace.scope);
+    workspace.onScope?.(focusWorkspace.scope);
+  }, [focusWorkspace, workspace]);
 
   useEffect(() => {
     if (account && enabled) void aiApi.state().then(setState).catch(() => {});

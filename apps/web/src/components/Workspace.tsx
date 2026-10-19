@@ -83,6 +83,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const [aiRun, setAiRun] = useState<{ tool: AiTool; nonce: number; source?: AiSource }>();
   /** What the open side-pane workspace (a PDF) offers the AI dock. */
   const [wsAi, setWsAi] = useState<WorkspaceAiSource | null>(null);
+  const [aiFocus, setAiFocus] = useState<{ scope: string; nonce: number }>();
   const [study, setStudy] = useState<{ cards: StudyCard[]; title: string } | null>(null);
   const [touring, setTouring] = useState(false);
   const [themeEditor, setThemeEditor] = useState(false);
@@ -485,6 +486,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             return { text: doc, label: `the whole note “${noteName(layout.note!)}”` };
           }}
           workspace={showLeft ? wsAi : null}
+          focusWorkspace={aiFocus}
           canInsert={!noNote}
           insert={(md) => ed()?.insert(md, { block: true })}
           onOpenSettings={() => { setDockOpen(null); setSettingsOpen("ai"); }}
@@ -605,6 +607,10 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     quality,
     askAi: (tool, source) => askAi(tool, source),
     registerAiSource: setWsAi,
+    openAi: (scope) => {
+      setAiFocus({ scope: scope ?? "page", nonce: Date.now() });
+      setDockOpen("ai");
+    },
   };
   const activeTab = layout.tabs.find((t) => t.id === layout.active) ?? layout.tabs[layout.tabs.length - 1];
 
