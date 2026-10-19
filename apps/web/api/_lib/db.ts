@@ -15,13 +15,15 @@ export function db(): NeonQueryFunction<false, false> {
 }
 
 /**
- * Create the tables the first time the API meets an empty database, so a new
+ * Create or update the tables the first time the API meets a database that lacks them, so a new
  * Neon database works without running anything by hand. One cheap check per cold start.
  */
 export function ensureSchema(): Promise<void> {
   schemaReady ??= (async () => {
     const sql = db();
-    const [row] = (await sql`select to_regclass('public.ai_usage') is not null as ready`) as [{ ready: boolean }];
+    // The newest column: present means every statement has already run.
+    const [row] = (await sql`select exists (select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'ai_settings' and column_name = 'base_url') as ready`) as [{ ready: boolean }];
     if (row.ready) return;
     for (const s of SCHEMA) await sql.query(s);
   })().catch((e) => {

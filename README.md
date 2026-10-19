@@ -56,7 +56,7 @@ Without `RESEND_API_KEY`, login codes are printed to the dev server log instead 
 ### AI keys
 
 - **Built-in:** set `ANTHROPIC_API_KEY` in Vercel. It's only read by the `/api/ai/*` functions and never reaches the browser. Each account gets `AI_DAILY_LIMIT_BUILTIN` requests a day (default 40).
-- **Own key:** set `AI_KEY_ENCRYPTION_SECRET` (32+ random characters, e.g. `openssl rand -base64 48`). Keys people save are checked with Anthropic, encrypted with AES-256-GCM (key derived from that secret, bound to the account id) and stored in Neon. The browser only ever sees the last 4 characters. Rotating the secret makes saved keys unreadable, and people are asked to enter them again.
-- Requests use `claude-opus-5-5` (override with `AI_MODEL`) with Anthropic's server-side fallback turned on, so a declined request is retried on Anthropic's recommended fallback model.
+- **Own key:** set `AI_KEY_ENCRYPTION_SECRET` (32+ random characters, e.g. `openssl rand -base64 48`). People pick a service in Settings: Anthropic, OpenAI, Google Gemini, xAI Grok, Groq, DeepSeek, Mistral, OpenRouter, or any other OpenAI-compatible API (public https address only), and can type the model to use. Keys are checked with that service, encrypted with AES-256-GCM (key derived from that secret, bound to the account id) and stored in Neon. The browser only ever sees the last 4 characters. Rotating the secret makes saved keys unreadable, and people are asked to enter them again.
+- Built-in requests use `claude-opus-5-5` (override with `AI_MODEL`) with Anthropic's server-side fallback turned on, so a declined request is retried on Anthropic's recommended fallback model.
 
 Sync uploads files up to 4 MB (Vercel's request size limit); larger PDFs stay on the computer for now.

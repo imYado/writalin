@@ -178,12 +178,19 @@ function AccountSection({ vault, vaultId, account, onAccount }: { vault: Vault; 
 function AiSection({ account, enabled, onEnabled }: { vault: Vault; account: Account | null | undefined; enabled: boolean; onEnabled: (v: boolean) => void }) {
   const [state, setState] = useState<AiState | null>(null);
   const [key, setKey] = useState("");
+  const [provider, setProvider] = useState("anthropic");
+  const [model, setModel] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (account && enabled) aiApi.state().then(setState).catch(() => setState(null));
+    if (account && enabled) aiApi.state().then((st) => { setState(st); setProvider(st.provider); setModel(st.model ?? ""); setBaseUrl(st.baseUrl ?? ""); }).catch(() => setState(null));
   }, [account, enabled]);
+  const info = state?.providers.find((p) => p.id === provider);
+  const savedLabel = state?.providers.find((p) => p.id === state.provider)?.label ?? "Your";
+  /** Same service as the saved key: the model can change without entering the key again. */
+  const sameService = Boolean(state?.hasOwnKey && state.provider === provider && provider !== "custom");
 
   const act = async (fn: () => Promise<AiState>, done?: string) => {
     setBusy(true);
@@ -233,7 +240,7 @@ function AiSection({ account, enabled, onEnabled }: { vault: Vault; account: Acc
               title={!state?.hasOwnKey ? "Save a key below first" : undefined}
             >
               <span className="option-title"><span className="option-dot" /> My own API key</span>
-              <span className="option-desc">{state?.hasOwnKey ? `Saved key ••••${state.keyHint}` : "Use your Anthropic key. Save one below."}</span>
+              <span className="option-desc">{state?.hasOwnKey ? `${savedLabel} key ••••${state.keyHint}` : "Claude, Gemini, Grok, DeepSeek and more. Save a key below."}</span>
             </button>
           </div>
           <form
@@ -241,31 +248,58 @@ function AiSection({ account, enabled, onEnabled }: { vault: Vault; account: Acc
             autoComplete="off"
             onSubmit={(e) => {
               e.preventDefault();
-              if (key.trim()) void act(() => aiApi.saveKey(key.trim()), "Key saved and switched on.").then(() => setKey(""));
+              if (key.trim()) {
+                void act(() => aiApi.saveKey({ apiKey: key.trim(), provider, model: model.trim() || undefined, baseUrl: provider === "custom" ? baseUrl.trim() : undefined }), "Key saved and switched on.").then(() => setKey(""));
+              } else if (sameService && model.trim() !== (state?.model ?? "")) {
+                void act(() => aiApi.setModel(model.trim()), "Model saved.");
+              }
             }}
           >
+            <div className="w-row">
+              <label className="w-field">
+                <span>AI service</span>
+                <select value={provider} onChange={(e) => { setProvider(e.target.value); setModel(e.target.value === state?.provider ? state.model ?? "" : ""); }}>
+                  {(state?.providers ?? [{ id: "anthropic", label: "Anthropic (Claude)", defaultModel: "", keyUrl: "" }]).map((p) => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="w-field">
+                <span>Model</span>
+                <input value={model} placeholder={info?.defaultModel || "Model name"} spellCheck={false} autoComplete="off" onChange={(e) => setModel(e.target.value)} />
+              </label>
+            </div>
+            {provider === "custom" && (
+              <label className="w-field">
+                <span>API address</span>
+                <input value={baseUrl} placeholder="https://api.example.com/v1" spellCheck={false} autoComplete="off" onChange={(e) => setBaseUrl(e.target.value)} />
+              </label>
+            )}
             <label className="w-field">
-              <span>{state?.hasOwnKey ? "Replace your Anthropic API key" : "Your Anthropic API key"}</span>
+              <span>{sameService ? `Replace your ${info?.label ?? ""} key (optional)` : `Your ${info?.label ?? ""} API key`}</span>
               <div className="w-row">
                 <input
                   type="password"
                   className="w-input"
                   style={{ flex: 1 }}
                   value={key}
-                  placeholder="sk-ant-…"
+                  placeholder={provider === "anthropic" ? "sk-ant-…" : "Paste your key"}
                   autoComplete="off"
                   spellCheck={false}
                   onChange={(e) => setKey(e.target.value)}
                 />
-                <button className="w-btn w-btn-primary w-btn-small" disabled={busy || !key.trim()}>{busy ? "Checking…" : "Save key"}</button>
+                <button className="w-btn w-btn-primary w-btn-small" disabled={busy || (!key.trim() && !(sameService && model.trim() !== (state?.model ?? "")))}>
+                  {busy ? "Checking…" : key.trim() ? "Save key" : "Save model"}
+                </button>
               </div>
             </label>
+            {info?.keyUrl && <a className="w-small" href={info.keyUrl} target="_blank" rel="noopener noreferrer">Get a {info.label} key</a>}
             <p className="w-muted settings-note">
-              Your key is checked with Anthropic, then encrypted (AES-256) on our server. It's never sent back to your browser; only its last 4 characters are shown.
+              Your key is checked with the service, then encrypted (AES-256) on our server. It's never sent back to your browser; only its last 4 characters are shown.
             </p>
             {state?.hasOwnKey && (
               <div>
-                <button type="button" className="w-btn w-btn-small w-btn-danger" disabled={busy} onClick={() => void act(() => aiApi.removeKey(), "Key removed.")}>Remove my key</button>
+                <button type="button" className="w-btn w-btn-small w-btn-danger" disabled={busy} onClick={() => void act(() => aiApi.removeKey(), "Key removed.")}>Remove my {savedLabel} key</button>
               </div>
             )}
           </form>
