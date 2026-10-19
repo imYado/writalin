@@ -252,7 +252,7 @@ export const NotePane = forwardRef<NotePaneHandle, Props>(function NotePane(p, r
             host={p.host}
             focusMode={p.focusMode}
             printLayout={p.printLayout}
-            placeholder="Start writing. Type / for blocks, [[ to link a note."
+            placeholder="Start writing. Type / for blocks and commands, [[ to link a note."
             onOutline={setOutline}
             onChange={(doc) => {
               latest.current = doc;

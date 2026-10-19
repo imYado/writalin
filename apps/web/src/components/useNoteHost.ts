@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { EditorHost, HostAction } from "@writalin/editor";
+import type { AppCommand, EditorHost, HostAction } from "@writalin/editor";
 import { newBlockId, taskDate, type Vault } from "@writalin/vault";
 import { isMarkdown } from "@writalin/shared";
 import { toast } from "@writalin/ui";
@@ -12,6 +12,8 @@ export function useNoteHost(
     openPath: (path: string, opts: { heading?: string; newPane?: boolean; page?: number }) => void;
     createAndOpen: (name: string) => void;
     action: (a: HostAction) => void;
+    /** Ctrl+K commands for the `/` menu (read fresh each time). */
+    appCommands?: () => AppCommand[];
   },
 ): EditorHost {
   return useMemo<EditorHost>(
@@ -60,6 +62,7 @@ export function useNoteHost(
         }
       },
       action: (a) => handlers.action(a),
+      appCommands: () => handlers.appCommands?.() ?? [],
       reminders: () =>
         vault.reminders().filter((t) => t.status === "todo").map((t) => ({
           text: t.text,

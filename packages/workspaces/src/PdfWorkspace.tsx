@@ -41,7 +41,7 @@ export function formatPages(pages: number[]): string {
   return out.join(", ");
 }
 
-export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, quality, currentNote, askAi, registerAiSource }: Props) {
+export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, quality, currentNote, askAi, registerAiSource, openAi }: Props) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -51,18 +51,9 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   const [hits, setHits] = useState<number[]>([]);
   const [sel, setSel] = useState<{ text: string; page: number; x: number; y: number } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const [aiOpen, setAiOpen] = useState(false);
-  const [aiScope, setAiScope] = useState<AiScope>("page");
   /** Pages ticked in "Choose pages" mode; null when not choosing. */
   const [picked, setPicked] = useState<Set<number> | null>(null);
-  const aiMenu = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!aiOpen) return;
-    const onDown = (e: PointerEvent) => { if (!aiMenu.current?.contains(e.target as Node)) setAiOpen(false); };
-    document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [aiOpen]);
 
   const link = (p?: number) => `${path.replace(/ /g, "%20")}${p ? `#page=${p}` : ""}`;
   /** Collect the selection, or some pages, with a link back to the source. */
@@ -105,7 +96,6 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   /** Send the selection, or some pages, to the AI dock. */
   const runAi = async (tool: PdfAiTool, scope: AiScope) => {
     if (!doc || !askAi) return;
-    setAiOpen(false);
     if (!currentNote) toast("Open a note on the right to keep the answer.", { tone: "warn" });
     const source = await buildSource(scope);
     if (!source) return;
@@ -124,8 +114,6 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       return next;
     });
   const startPicking = () => {
-    setAiScope("pick");
-    setAiOpen(false);
     setPicked((cur) => cur ?? new Set([page]));
     setThumbs(true);
   };
@@ -257,41 +245,16 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         <button className="w-icon-btn" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} aria-label="Zoom out">−</button>
         <span className="w-muted">{Math.round(zoom * 100)}%</span>
         <button className="w-icon-btn" onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} aria-label="Zoom in">+</button>
-        {askAi && (
-          <div className="pdf-ai" ref={aiMenu}>
-            <button
-              className="w-btn w-btn-small"
-              aria-expanded={aiOpen}
-              disabled={!doc}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                if (!aiOpen && aiScope === "selection" && !sel) setAiScope("page");
-                setAiOpen((o) => !o);
-              }}
-            >
-              <Icon name="sparkle" size={14} /> AI
-            </button>
-            {aiOpen && (
-              <div className="w-popover pdf-ai-menu" role="menu">
-                <div className="pdf-ai-scope" role="group" aria-label="What to send">
-                  <button className="w-chip" aria-pressed={aiScope === "page"} onClick={() => setAiScope("page")}>This page ({page})</button>
-                  <button className="w-chip" aria-pressed={aiScope === "all"} onClick={() => setAiScope("all")}>All pages</button>
-                  <button className="w-chip" aria-pressed={aiScope === "pick"} onClick={startPicking}>
-                    {picked?.size ? `Chosen pages (${picked.size})` : "Choose pages…"}
-                  </button>
-                  <button className="w-chip" aria-pressed={aiScope === "selection"} disabled={!sel} title={sel ? undefined : "Highlight text in the PDF first"} onClick={() => setAiScope("selection")}>
-                    Highlighted text
-                  </button>
-                </div>
-                {AI_TOOLS.map((t) => (
-                  <button key={t.id} className="w-action" role="menuitem" onClick={() => void runAi(t.id, aiScope)}>
-                    <span className="w-action-label">{t.label}</span>
-                  </button>
-                ))}
-                <p className="w-muted w-small">The answer opens in the AI panel, ready to add to your note with a link back here.</p>
-              </div>
-            )}
-          </div>
+        {openAi && (
+          <button
+            className="w-btn w-btn-small pdf-ai"
+            disabled={!doc}
+            title="Open the AI panel on this PDF"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => openAi(sel ? "selection" : "page")}
+          >
+            <Icon name="sparkle" size={14} /> AI
+          </button>
         )}
         <form className="pdf-search" onSubmit={(e) => { e.preventDefault(); void search(); }}>
           <input className="w-input" placeholder="Search PDF" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search in PDF" />
@@ -329,7 +292,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
               <button className="w-btn w-btn-primary w-btn-small" onClick={quote}>Quote in note</button>
               {askAi && <button className="w-btn w-btn-small" onClick={() => void runAi("explain", "selection")}>Explain</button>}
               {askAi && <button className="w-btn w-btn-small" onClick={() => void runAi("flashcards", "selection")}>Flashcards</button>}
-              {askAi && <button className="w-btn w-btn-small" onClick={() => { setAiScope("selection"); setAiOpen(true); }}>More AI…</button>}
+              {openAi && <button className="w-btn w-btn-small" onClick={() => openAi("selection")}>More AI…</button>}
             </div>
           )}
         </div>
@@ -346,7 +309,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
               <button key={t.id} className="w-btn w-btn-small" disabled={!picked.size} onClick={() => void runAi(t.id, "pick")}>{t.label}</button>
             ))}
           </span>
-          <button className="w-icon-btn" aria-label="Stop choosing pages" title="Done" onClick={() => { setPicked(null); setAiScope("page"); }}>
+          <button className="w-icon-btn" aria-label="Stop choosing pages" title="Done" onClick={() => setPicked(null)}>
             <Icon name="close" size={14} />
           </button>
         </div>

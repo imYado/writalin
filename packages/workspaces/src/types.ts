@@ -42,4 +42,6 @@ export interface WorkspaceProps {
   askAi?: (tool: "summarize" | "flashcards" | "explain" | "quiz" | "mainpoint", source: AiSourceText) => void;
   /** Offer this workspace's text to the AI dock while it is open; null takes it back. */
   registerAiSource?: (source: WorkspaceAiSource | null) => void;
+  /** Open the AI panel reading this workspace, starting on one of its scopes. */
+  openAi?: (scope?: string) => void;
 }

@@ -83,6 +83,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const [aiRun, setAiRun] = useState<{ tool: AiTool; nonce: number; source?: AiSource }>();
   /** What the open side-pane workspace (a PDF) offers the AI dock. */
   const [wsAi, setWsAi] = useState<WorkspaceAiSource | null>(null);
+  const [aiFocus, setAiFocus] = useState<{ scope: string; nonce: number }>();
   const [study, setStudy] = useState<{ cards: StudyCard[]; title: string } | null>(null);
   const [touring, setTouring] = useState(false);
   const [themeEditor, setThemeEditor] = useState(false);
@@ -266,10 +267,13 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   }, [vault]);
 
   const hostAction = useRef<(a: HostAction) => void>(() => {});
+  const commandsRef = useRef<Command[]>([]);
   const host = useNoteHost(vault, () => layout.note, {
     openPath: (p, o) => openPath(p, o),
     createAndOpen: (name) => void newNote({ title: name }),
     action: (a) => hostAction.current(a),
+    // Notes, PDFs and scratch pads are files, not commands: `[[` links to those.
+    appCommands: () => commandsRef.current.filter((c) => !/^(note|pdf|scratch):/.test(c.id)),
   });
   hostAction.current = (a) => {
     switch (a) {
@@ -414,6 +418,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vault, version, focusMode, printLayout, outlineOpen, layout.note, customThemes, records, record.id, goZone, settings]);
 
+  commandsRef.current = commands;
+
   // ----- dock -----
   const ed = () => pane.current?.editor;
   const noNote = !layout.note || layout.view !== "note";
@@ -480,6 +486,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             return { text: doc, label: `the whole note “${noteName(layout.note!)}”` };
           }}
           workspace={showLeft ? wsAi : null}
+          focusWorkspace={aiFocus}
           canInsert={!noNote}
           insert={(md) => ed()?.insert(md, { block: true })}
           onOpenSettings={() => { setDockOpen(null); setSettingsOpen("ai"); }}
@@ -600,6 +607,10 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     quality,
     askAi: (tool, source) => askAi(tool, source),
     registerAiSource: setWsAi,
+    openAi: (scope) => {
+      setAiFocus({ scope: scope ?? "page", nonce: Date.now() });
+      setDockOpen("ai");
+    },
   };
   const activeTab = layout.tabs.find((t) => t.id === layout.active) ?? layout.tabs[layout.tabs.length - 1];
 
@@ -672,21 +683,16 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             <Icon name="search" size={20} />
             <span>Search</span>
           </button>
-          <button className="rail-item w-glow" onClick={() => setSettingsOpen(true)} title="Settings">
-            <Icon name="settings" size={20} />
-            <span>Settings</span>
-          </button>
+          {/* The profile button is the way into Settings (account, theme, AI…). */}
           {account ? (
-            <button className="rail-item rail-avatar w-glow" onClick={() => setSettingsOpen(true)} title={account.email} aria-label={`Account: ${account.email}`}>
+            <button className="rail-item rail-avatar w-glow" onClick={() => setSettingsOpen(true)} title={`Settings · ${account.email}`} aria-label={`Settings and account: ${account.email}`}>
               <span className="avatar">{account.email[0]!.toUpperCase()}</span>
             </button>
           ) : (
-            account === null && (
-              <a className="rail-item w-glow" href="/login" title="Sign in">
-                <Icon name="user" size={20} />
-                <span>Sign in</span>
-              </a>
-            )
+            <button className="rail-item w-glow" onClick={() => setSettingsOpen(true)} title="Settings and sign in" aria-label="Settings and sign in">
+              <Icon name="user" size={20} />
+              <span>Profile</span>
+            </button>
           )}
         </div>
       </nav>
@@ -733,8 +739,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
               <span>Search or run a command</span>
               <kbd>Ctrl K</kbd>
             </button>
-            <button className="w-icon-btn topbar-phone" onClick={() => setSettingsOpen(true)} aria-label="Settings" title="Settings">
-              <Icon name="settings" />
+            <button className="w-icon-btn topbar-phone" onClick={() => setSettingsOpen(true)} aria-label="Settings and account" title="Settings and account">
+              {account ? <span className="avatar">{account.email[0]!.toUpperCase()}</span> : <Icon name="user" />}
             </button>
           </div>
         </header>
