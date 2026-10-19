@@ -50,9 +50,8 @@ Without `RESEND_API_KEY`, login codes are printed to the dev server log instead 
 
 1. Create a Vercel project from this repo and set **Root Directory** to `apps/web`.
 2. Add a Neon database (Vercel → Storage → Neon). It sets `DATABASE_URL`.
-3. Run the schema once: `DATABASE_URL=... pnpm --filter @writalin/web db:migrate`.
-4. Add `RESEND_API_KEY` and `EMAIL_FROM` (a sender on a domain verified in Resend).
-5. Deploy. See `apps/web/.env.example` for all variables.
+3. Add `RESEND_API_KEY` from [Resend](https://resend.com). Without `EMAIL_FROM`, codes come from `onboarding@resend.dev`, which Resend only delivers to your own Resend account email. To sign in anyone else, verify a domain in Resend and set `EMAIL_FROM`, e.g. `Writalin <login@your-domain.com>`.
+4. Redeploy so the new variables apply. The API creates its tables the first time it runs (or run `DATABASE_URL=... pnpm --filter @writalin/web db:migrate`). See `apps/web/.env.example` for all variables.
 
 ### AI keys
 

@@ -1,3 +1,5 @@
+import { ensureSchema } from "./db.js";
+
 export class HttpError extends Error {
   constructor(public status: number, message: string, public code?: string) {
     super(message);
@@ -29,6 +31,7 @@ export function handler(fn: (req: Request) => Promise<Response>) {
     try {
       // Cookie-authenticated endpoints only accept same-origin writes.
       if (req.method !== "GET" && req.method !== "HEAD") assertSameOrigin(req);
+      if (process.env.DATABASE_URL) await ensureSchema();
       return await fn(req);
     } catch (e) {
       if (e instanceof HttpError) return json({ error: e.message, code: e.code }, { status: e.status });
