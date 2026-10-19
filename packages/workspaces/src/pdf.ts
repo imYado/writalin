@@ -1,5 +1,7 @@
-import * as pdfjs from "pdfjs-dist";
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+// The legacy build carries polyfills (e.g. Map.getOrInsertComputed) that
+// Safari and older Chrome or Firefox lack; without them pages render blank.
+import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
+import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;

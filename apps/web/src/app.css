@@ -262,3 +262,30 @@
   .note-title { font-size: 1.6rem; }
   .option-cards { grid-template-columns: 1fr; }
 }
+
+/* ---------- flashcard study ---------- */
+.study { display: flex; flex-direction: column; gap: 16px; }
+.study-progress { height: 6px; border-radius: 999px; background: var(--w-soft); overflow: hidden; }
+.study-progress span { display: block; height: 100%; background: var(--w-accent); border-radius: inherit; transition: width 400ms var(--w-ease); }
+.study-card { position: relative; display: grid; min-height: 220px; border: 0; padding: 0; background: none; cursor: pointer; perspective: 1200px; font: inherit; color: var(--w-text); }
+.study-side { grid-area: 1 / 1; display: flex; flex-direction: column; justify-content: center; gap: 10px; padding: 28px; border-radius: 24px; text-align: center; font-size: 1.2rem; line-height: 1.45; backface-visibility: hidden; transition: transform 450ms var(--w-ease); }
+.study-side small { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--w-text-muted); }
+.study-front { background: var(--w-soft); }
+.study-back { background: linear-gradient(160deg, var(--w-accent-soft), var(--w-soft) 75%); transform: rotateY(180deg); }
+.study-card.flipped .study-front { transform: rotateY(-180deg); }
+.study-card.flipped .study-back { transform: rotateY(0); }
+.study-actions { display: flex; gap: 8px; justify-content: center; }
+.study-actions kbd { margin-left: 6px; }
+.study-again { color: var(--w-danger); }
+.study-count { margin: 0; text-align: center; }
+.study-done { text-align: center; padding: 24px 0; }
+.study-done h3 { margin: 0 0 6px; }
+@media (prefers-reduced-motion: reduce) { .study-side { transition: none; } }
+
+/* ---------- AI flashcard preview ---------- */
+.ai-cards { display: flex; flex-direction: column; gap: 6px; max-height: 32vh; overflow: auto; margin: 0; padding: 0; list-style: none; }
+.ai-cards li { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 10px 12px; border-radius: 14px; background: var(--w-surface); font-size: 13.5px; }
+.ai-cards li b { font-weight: 600; }
+.ai-cards li span { color: var(--w-text-muted); }
+.ai-source { font-size: 12px; }
+.w-btn-primary kbd { background: rgb(255 255 255 / 0.2); color: inherit; }

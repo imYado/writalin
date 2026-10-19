@@ -9,6 +9,8 @@ import {
   toggleTaskLine,
   formatTaskLine,
   parseFlashcards,
+  cardsFromText,
+  formatCards,
   parseNote,
   pdfQuote,
   tagMatches,
@@ -122,6 +124,18 @@ describe("flashcards", () => {
       ["What is ATP", "Energy currency"],
       ["Capital of France", "Paris"],
     ]);
+  });
+
+  it("cleans up AI flashcards into note lines", () => {
+    const ai = "Here are your cards:\n1. **What is ATP?** :: The cell's energy currency\n- Mitosis makes::two identical cells\n\nQ: Where is DNA kept?\nA: In the nucleus\n";
+    const cards = cardsFromText(ai);
+    expect(cards).toEqual([
+      { question: "What is ATP?", answer: "The cell's energy currency" },
+      { question: "Mitosis makes", answer: "two identical cells" },
+      { question: "Where is DNA kept?", answer: "In the nucleus" },
+    ]);
+    const lines = formatCards(cards);
+    expect(parseFlashcards(lines, "f.md")).toHaveLength(3);
   });
 });
 

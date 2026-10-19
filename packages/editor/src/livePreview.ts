@@ -144,6 +144,8 @@ const CALLOUT_RE = /^>\s*\[!([\w-]+)\]([+-]?)\s*(.*)$/;
 const WIKI_RE = /(!?)\[\[([^[\]|\n]+?)(\|[^[\]\n]*)?\]\]/g;
 const TAG_RE = /(^|[\s(,;])(#[\p{L}\p{N}_\-/]*[\p{L}_\-/][\p{L}\p{N}_\-/]*)/gu;
 const HIGHLIGHT_RE = /==([^=\n]+)==/g;
+/** `Question :: Answer` cards (same rule as the vault's parser): not tasks, spaces around `::`. */
+const CARD_RE = /^(?![ \t]*[-*+][ \t]+\[)([ \t]*(?:[-*+][ \t]+)?)(.+?)([ \t]+::[ \t]+)(.+?)[ \t]*$/;
 
 function build(view: EditorView): DecorationSet {
   const { state } = view;
@@ -316,6 +318,22 @@ function build(view: EditorView): DecorationSet {
       if (start === line.from && /^#+\s/.test(line.text)) continue;
       decos.push(Decoration.mark({ class: "cm-tag", attributes: { "data-tag": m[2]!.slice(1) } }).range(start, start + m[2]!.length));
     }
+    // Flashcards: the answer stays blurred until you point at it (or put the cursor on the line).
+    for (let pos = from; pos <= to; ) {
+      const line = state.doc.lineAt(pos);
+      pos = line.to + 1;
+      const m = CARD_RE.exec(line.text);
+      if (!m || inCode(line.from)) continue;
+      const q = line.from + m[1]!.length;
+      const sep = q + m[2]!.length;
+      const a = sep + m[3]!.length;
+      const end = a + m[4]!.length;
+      lineDeco(line.from, "cm-card");
+      decos.push(Decoration.mark({ class: "cm-card-q" }).range(q, sep));
+      if (isActive(line.from)) decos.push(Decoration.mark({ class: "cm-card-sep-raw" }).range(sep, a));
+      else decos.push(Decoration.replace({ widget: new CardSeparator() }).range(sep, a));
+      decos.push(Decoration.mark({ class: isActive(line.from) ? "cm-card-a cm-card-a-shown" : "cm-card-a" }).range(a, end));
+    }
     for (const m of text.matchAll(HIGHLIGHT_RE)) {
       const start = from + m.index;
       if (inCode(start)) continue;
@@ -334,6 +352,18 @@ function decodeURIComponentSafe(s: string): string {
   try {
     return decodeURIComponent(s);
   } catch {
+    return s;
+  }
+}
+
+class CardSeparator extends WidgetType {
+  override eq() {
+    return true;
+  }
+  toDOM() {
+    const s = document.createElement("span");
+    s.className = "cm-card-sep";
+    s.setAttribute("aria-label", "answer:");
     return s;
   }
 }
