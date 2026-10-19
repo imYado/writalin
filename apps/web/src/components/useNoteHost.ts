@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { EditorHost, HostAction } from "@writalin/editor";
-import type { Vault } from "@writalin/vault";
+import { newBlockId, taskDate, type Vault } from "@writalin/vault";
 import { isMarkdown } from "@writalin/shared";
 
 /** The bridge between the shared editor and this vault. */
@@ -45,12 +45,39 @@ export function useNoteHost(
         const path = vault.files.has(target) ? target : vault.resolve(target, fromPath() ?? "");
         if (!path) return null;
         try {
-          return URL.createObjectURL(await vault.store.readBinary(path));
+          const blob = await vault.store.readBinary(path);
+          // SVG only renders in an <img> with its proper type.
+          const typed = /\.svg$/i.test(path) && blob.type !== "image/svg+xml" ? new Blob([blob], { type: "image/svg+xml" }) : blob;
+          return URL.createObjectURL(typed);
         } catch {
           return null;
         }
       },
       action: (a) => handlers.action(a),
+      reminders: () =>
+        vault.reminders().filter((t) => t.status === "todo").map((t) => ({
+          text: t.text,
+          date: taskDate(t),
+          target: () => {
+            // A new id is written to the reminder's line in the background.
+            const id = t.blockId ?? newBlockId();
+            if (!t.blockId) void vault.ensureBlockId(t, id).catch(() => {});
+            return `Reminders#^${id}`;
+          },
+        })),
+      readText: async (target) => {
+        const path = vault.files.has(target) ? target : vault.resolve(target, fromPath() ?? "");
+        return path ? (await vault.read(path)).text : null;
+      },
+      writeText: async (target, text) => {
+        const path = vault.files.has(target) ? target : vault.resolve(target, fromPath() ?? "") ?? target;
+        await vault.write(path, text);
+      },
+      saveImage: async (file) => {
+        const ext = file.type.split("/")[1]?.replace("jpeg", "jpg").replace("svg+xml", "svg") ?? "png";
+        const name = file.name && file.name !== "image.png" ? file.name : `Pasted image ${new Date().toISOString().slice(0, 19).replace(/[T:]/g, (c) => (c === "T" ? " " : ""))}.${ext}`;
+        return vault.writeBinary(`${vault.settings.attachmentsFolder}/${name}`, file);
+      },
     }),
     // Handlers are read through refs by callers; the host itself is stable per vault.
     // eslint-disable-next-line react-hooks/exhaustive-deps

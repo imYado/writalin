@@ -11,5 +11,9 @@ export interface WorkspaceProps {
   insertIntoNote: (markdown: string, opts?: { source?: string }) => void;
   /** Path of the note on the right, if any. */
   currentNote: VaultPath | null;
+  /** Add Markdown to the end of the open note, through its editor. */
+  appendToNote?: (markdown: string) => void;
+  /** Save the open note now, before changing its file from outside the editor. */
+  flushNote?: () => Promise<void>;
   quality: "low" | "medium" | "high";
 }

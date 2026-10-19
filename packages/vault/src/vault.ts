@@ -4,11 +4,11 @@ import type { FileStat, FileStore } from "./fs/types";
 import { parseNote } from "./markdown/parse";
 import { splitFrontmatter, updateFrontmatter } from "./markdown/frontmatter";
 import { rewriteWikiLinks, rewriteMarkdownLinks } from "./markdown/links";
-import { toggleTaskLine } from "./markdown/tasks";
+import { newBlockId, toggleTaskLine } from "./markdown/tasks";
 import { tagMatches, normalizeTag } from "./markdown/tags";
 import { SearchIndex } from "./search";
 import { ACTIVITY_PATH, addActivity, emptyActivity, mergeActivity, type ActivityLog } from "./activity";
-import { DEFAULT_SETTINGS, SETTINGS_PATH, SCRATCHPAD_PATH, type VaultSettings } from "./settings";
+import { DEFAULT_SETTINGS, SETTINGS_PATH, SCRATCHPAD_PATH, REMINDERS_PATH, SCRATCH_FOLDER, TASKS_PATH, isScratch, isSystemNote, type VaultSettings } from "./settings";
 
 export type VaultEvent =
   | { type: "indexed" }
@@ -406,16 +406,77 @@ export class Vault {
     return [...this.notes.values()].flatMap((n) => n.tasks);
   }
 
-  /** Check or uncheck a task in its note. Fails safely if the line moved. */
-  async toggleTask(task: Task): Promise<void> {
+  /**
+   * Change a task's line in its note: `edit` returns the new line, or null to
+   * remove it. Fails safely if the line was edited elsewhere.
+   */
+  private async editTaskLine(task: Task, edit: (line: string) => string | null): Promise<void> {
     const { text } = await this.read(task.path);
     const lines = text.split("\n");
     let idx = task.line;
     if (lines[idx]?.replace(/\r$/, "") !== task.raw) idx = lines.findIndex((l) => l.replace(/\r$/, "") === task.raw);
     if (idx === -1) throw new Error("That task was edited elsewhere. Open the note to update it.");
     const cr = lines[idx]!.endsWith("\r") ? "\r" : "";
-    lines[idx] = toggleTaskLine(lines[idx]!.replace(/\r$/, "")) + cr;
+    const next = edit(lines[idx]!.replace(/\r$/, ""));
+    if (next == null) lines.splice(idx, 1);
+    else lines[idx] = next + cr;
     await this.write(task.path, lines.join("\n"));
+  }
+
+  /** Check or uncheck a task in its note. Fails safely if the line moved. */
+  toggleTask(task: Task): Promise<void> {
+    return this.editTaskLine(task, toggleTaskLine);
+  }
+
+  /** Remove a task (or reminder) line from its note. */
+  deleteTask(task: Task): Promise<void> {
+    return this.editTaskLine(task, () => null);
+  }
+
+  /** The task's block id, adding one to its line if it has none. */
+  async ensureBlockId(task: Task, id = newBlockId()): Promise<string> {
+    if (task.blockId) return task.blockId;
+    await this.editTaskLine(task, (l) => `${l.trimEnd()} ^${id}`);
+    return id;
+  }
+
+  /** Vault-wide tasks: the checklist in Tasks.md. */
+  vaultTasks(): Task[] {
+    return this.notes.get(TASKS_PATH)?.tasks ?? [];
+  }
+
+  /** Calendar reminders: the dated checklist in Reminders.md. */
+  reminders(): Task[] {
+    return this.notes.get(REMINDERS_PATH)?.tasks ?? [];
+  }
+
+  /** Notes that link to a reminder with `[[Reminders#^id]]`. */
+  reminderBacklinks(blockId: string): VaultPath[] {
+    const out: VaultPath[] = [];
+    for (const n of this.notes.values()) {
+      if (n.path === REMINDERS_PATH) continue;
+      if (n.links.some((l) => l.heading === `^${blockId}` && this.resolve(l.target, n.path) === REMINDERS_PATH)) out.push(n.path);
+    }
+    return out;
+  }
+
+  /** Append a line to Tasks.md or Reminders.md, creating it first if needed. */
+  async appendTo(path: typeof TASKS_PATH | typeof REMINDERS_PATH, line: string): Promise<void> {
+    if (!this.files.has(path)) await this.createNote(noteName(path), { folder: "" });
+    await this.append(path, line);
+  }
+
+  /** Scratch pads, newest first. */
+  scratches(): NoteMeta[] {
+    return [...this.notes.values()].filter((n) => isScratch(n.path)).sort((a, b) => b.mtime - a.mtime);
+  }
+
+  async createScratch(): Promise<VaultPath> {
+    const d = new Date();
+    const stamp = `${isoDate(d)} ${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
+    const path = this.uniquePath(joinPath(SCRATCH_FOLDER, `Scratch ${stamp}.md`));
+    await this.write(path, "");
+    return path;
   }
 
   /** Append Markdown to the end of a note (used by "Send to note", tasks, scratchpad moves). */
@@ -434,7 +495,7 @@ export class Vault {
   }
 
   recentNotes(limit = 12): NoteMeta[] {
-    return [...this.notes.values()].filter((n) => n.path !== SCRATCHPAD_PATH).sort((a, b) => b.mtime - a.mtime).slice(0, limit);
+    return [...this.notes.values()].filter((n) => !isSystemNote(n.path)).sort((a, b) => b.mtime - a.mtime).slice(0, limit);
   }
 
   folders(): string[] {

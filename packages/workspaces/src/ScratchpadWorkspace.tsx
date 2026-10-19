@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NoteEditor, type NoteEditorHandle, type EditorHost } from "@writalin/editor";
-import { debounce } from "@writalin/shared";
-import { SCRATCHPAD_PATH } from "@writalin/vault";
-import { Modal, toast } from "@writalin/ui";
+import { debounce, noteName, type VaultPath } from "@writalin/shared";
+import { isSystemNote } from "@writalin/vault";
+import { Icon, Modal, toast } from "@writalin/ui";
 import type { WorkspaceProps } from "./types";
+import { removeWithUndo } from "./undo";
 
-/** One untitled Scratchpad.md for brain dumps. Saved as you type. */
-export function ScratchpadWorkspace({ vault, version, host }: WorkspaceProps & { host: EditorHost }) {
+/** A scratch pad for brain dumps, one file each. Saved as you type. */
+export function ScratchpadWorkspace({ vault, version, host, path, onDeleted }: WorkspaceProps & { host: EditorHost; path: VaultPath; onDeleted: () => void }) {
   const [text, setText] = useState<string | null>(null);
   const [selection, setSelection] = useState("");
   const [moving, setMoving] = useState(false);
@@ -15,24 +16,25 @@ export function ScratchpadWorkspace({ vault, version, host }: WorkspaceProps & {
 
   useEffect(() => {
     let alive = true;
+    setText(null);
     void (async () => {
-      await vault.ensureScratchpad();
-      const r = await vault.read(SCRATCHPAD_PATH);
+      if (!vault.files.has(path)) await vault.write(path, "");
+      const r = await vault.read(path);
       mtime.current = r.mtime;
       if (alive) setText(r.text);
     })();
     return () => {
       alive = false;
     };
-  }, [vault]);
+  }, [vault, path]);
 
   const save = useMemo(
     () =>
       debounce(async (doc: string) => {
-        const s = await vault.write(SCRATCHPAD_PATH, doc);
+        const s = await vault.write(path, doc);
         mtime.current = s.mtime;
       }, 400),
-    [vault],
+    [vault, path],
   );
   useEffect(() => () => save.flush(), [save]);
   void version;
@@ -41,6 +43,20 @@ export function ScratchpadWorkspace({ vault, version, host }: WorkspaceProps & {
 
   return (
     <div className="ws ws-scratch">
+      <div className="scratch-head">
+        <span className="w-muted w-small">{noteName(path)}</span>
+        <button
+          className="w-icon-btn"
+          aria-label="Delete this scratch pad"
+          title="Delete this scratch pad"
+          onClick={() => {
+            save.cancel();
+            void removeWithUndo(vault, path, "Scratch pad", () => vault.delete(path)).then(onDeleted);
+          }}
+        >
+          <Icon name="trash" size={15} />
+        </button>
+      </div>
       {selection.trim() && (
         <div className="ws-floating">
           <button className="w-btn w-btn-small w-btn-primary" onClick={() => setMoving(true)}>Move to note</button>
@@ -48,7 +64,7 @@ export function ScratchpadWorkspace({ vault, version, host }: WorkspaceProps & {
       )}
       <NoteEditor
         ref={ref}
-        docKey={`scratch:${vault.name}`}
+        docKey={`scratch:${vault.name}:${path}`}
         initialDoc={text}
         host={host}
         onChange={(d) => save(d)}
@@ -57,7 +73,7 @@ export function ScratchpadWorkspace({ vault, version, host }: WorkspaceProps & {
       />
       {moving && (
         <MoveToNote
-          names={[...vault.notes.values()].filter((n) => n.path !== SCRATCHPAD_PATH).map((n) => ({ name: n.name, path: n.path }))}
+          names={[...vault.notes.values()].filter((n) => !isSystemNote(n.path)).map((n) => ({ name: n.name, path: n.path }))}
           onClose={() => setMoving(false)}
           onMove={async (target, isNew) => {
             const chunk = ref.current?.selection() ?? "";

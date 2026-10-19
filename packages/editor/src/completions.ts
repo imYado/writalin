@@ -98,16 +98,33 @@ function wikiSource(ctx: CompletionContext): CompletionResult | null {
   if (!host) return null;
   const start = m.from + m.text.indexOf("[[") + 2;
   const closes = ctx.state.sliceDoc(ctx.pos, ctx.pos + 2) === "]]";
+  const embed = m.text.startsWith("!");
+  const notes: Completion[] = host.noteNames().map((name) => ({
+    label: name,
+    type: "text",
+    section: "Notes",
+    apply: (view: EditorView, _c: Completion, from: number, to: number) => {
+      const insert = closes ? name : `${name}]]`;
+      view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + name.length + 2 }, userEvent: "input.complete" });
+    },
+  }));
+  // Reminders link as `[[Reminders#^id|text]]`, so the calendar can show the note back.
+  const reminders: Completion[] = embed
+    ? []
+    : (host.reminders?.() ?? []).map((r) => ({
+        label: r.text,
+        detail: r.date ? `Reminder · ${r.date}` : "Reminder",
+        type: "variable",
+        section: "Reminders",
+        apply: (view: EditorView, _c: Completion, from: number, to: number) => {
+          const body = `${r.target()}|${r.text.replace(/[[\]|]/g, "")}`;
+          const insert = closes ? body : `${body}]]`;
+          view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + body.length + 2 }, userEvent: "input.complete" });
+        },
+      }));
   return {
     from: start,
-    options: host.noteNames().map((name) => ({
-      label: name,
-      type: "text",
-      apply: (view: EditorView, _c: Completion, from: number, to: number) => {
-        const insert = closes ? name : `${name}]]`;
-        view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + name.length + 2 }, userEvent: "input.complete" });
-      },
-    })),
+    options: [...notes, ...reminders],
     validFor: /^[^[\]\n|#]*$/,
   };
 }

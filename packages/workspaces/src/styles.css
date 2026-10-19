@@ -24,8 +24,9 @@
 .zone-card h3 { margin: 0 0 6px; font-size: 15px; }
 
 /* Tasks */
-.ws-quick-add { display: flex; gap: 8px; padding: 0 14px 10px; }
-.ws-quick-add .w-input:first-child { flex: 1; }
+.ws-quick-add { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 10px; }
+.ws-quick-add .w-input:first-child { flex: 1 1 220px; }
+.ws-quick-add .w-input:not(:first-child) { flex: 1 1 120px; min-width: 0; }
 .task-group { padding: 10px 14px 4px; }
 .task-group h3 { margin: 0 0 8px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--w-text-muted); font-weight: 600; }
 .task-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -44,6 +45,11 @@
 .task-late { color: var(--w-danger); }
 .task-tag { color: var(--w-tag); }
 .task-source { border: 0; background: none; padding: 0; color: var(--w-link); cursor: pointer; font-size: 12px; }
+.task-scope { color: var(--w-accent); background: var(--w-accent-soft); border-radius: 999px; padding: 1px 8px; }
+.task-delete, .cal-delete { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 999px; background: none; color: var(--w-text-muted); cursor: pointer; opacity: 0; transition: opacity var(--w-anim), background-color var(--w-anim), color var(--w-anim); }
+.task-card:hover .task-delete, .cal-side-list li:hover .cal-delete, .task-delete:focus-visible, .cal-delete:focus-visible { opacity: 1; }
+.task-delete:hover, .cal-delete:hover { background: color-mix(in srgb, var(--w-danger) 14%, transparent); color: var(--w-danger); }
+@media (hover: none) { .task-delete, .cal-delete { opacity: 0.7; } }
 
 /* Calendar */
 .ws-calendar .ws-toolbar { gap: 10px; }
@@ -159,3 +165,12 @@
   .cal-body { flex-direction: column; }
   .cal-side { width: auto; }
 }
+
+/* Reminders in the calendar: their own colour, and the notes that link to them. */
+.cal-reminder button::before { content: "⏰ "; }
+.cal-side-task-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cal-side-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--w-text); }
+.cal-side-list li.done .cal-side-text { text-decoration: line-through; opacity: 0.6; }
+.cal-linked { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; color: var(--w-text-muted); font-size: 11.5px; }
+.cal-side-list .cal-linked-note { flex: none; color: var(--w-link); font-size: 11.5px; }
+.ws-quick-add select.w-input { padding-right: 32px; }

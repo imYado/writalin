@@ -55,7 +55,8 @@
 .split-open { grid-template-columns: minmax(320px, 1fr) minmax(420px, 1.15fr); gap: 12px; }
 .left-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--w-panel); border-radius: 22px; overflow: hidden; box-shadow: var(--w-shadow); animation: w-rise 300ms var(--w-ease); }
 .right-pane { min-width: 0; min-height: 0; }
-.tabs { display: flex; align-items: center; gap: 4px; padding: 8px 8px 4px; overflow-x: auto; flex: none; }
+.tabs-row { display: flex; align-items: center; gap: 4px; padding: 8px 8px 4px; flex: none; }
+.tabs { display: flex; align-items: center; gap: 4px; overflow-x: auto; flex: 1; min-width: 0; scrollbar-width: none; }
 .tab { display: flex; align-items: center; border-radius: 999px; color: var(--w-text-muted); flex: none; transition: background-color var(--w-anim), color var(--w-anim); }
 .tab:hover { background: var(--w-soft); color: var(--w-text); }
 .tab > button:first-child { display: flex; align-items: center; gap: 6px; border: 0; background: none; padding: 6px 4px 6px 12px; cursor: pointer; font-size: 13px; color: inherit; max-width: 180px; }
@@ -64,7 +65,30 @@
 .tab-close { border: 0; background: none; color: inherit; padding: 5px 8px 5px 4px; cursor: pointer; opacity: 0.5; border-radius: 999px; }
 .tab-close:hover { opacity: 1; }
 .tab-adder { position: relative; flex: none; }
-.tab-adder-menu { top: 100%; left: 0; width: 210px; display: flex; flex-direction: column; gap: 4px; padding: 8px; }
+.tab-adder-menu { top: calc(100% + 6px); right: 0; width: 260px; display: flex; flex-direction: column; gap: 2px; padding: 8px; max-height: min(520px, 70vh); overflow-y: auto; }
+.tab-adder-menu .w-action { width: 100%; }
+.tab-adder-label { padding: 10px 10px 4px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--w-text-muted); font-weight: 600; }
+.tab-adder-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.tab-adder-list li { display: flex; align-items: center; border-radius: 12px; transition: background-color var(--w-anim); }
+.tab-adder-list li:hover { background: var(--w-soft); }
+.tab-adder-item { flex: 1; min-width: 0; border: 0; background: none; text-align: left; padding: 8px 10px; font: inherit; font-size: 13px; color: var(--w-text); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-adder-del, .note-list-del, .note-delete { display: grid; place-items: center; border: 0; background: none; color: var(--w-text-muted); width: 30px; height: 30px; border-radius: 999px; cursor: pointer; opacity: 0; transition: opacity var(--w-anim), background-color var(--w-anim), color var(--w-anim); }
+.tab-adder-list li:hover .tab-adder-del, .note-list-row:hover .note-list-del, .note-head:hover .note-delete, .tab-adder-del:focus-visible, .note-list-del:focus-visible, .note-delete:focus-visible { opacity: 1; }
+.tab-adder-del:hover, .note-list-del:hover, .note-delete:hover { background: color-mix(in srgb, var(--w-danger) 14%, transparent); color: var(--w-danger); }
+.note-list-row { position: relative; }
+.note-list-row .note-list-del { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; padding: 0; display: grid; place-items: center; background: none; box-shadow: none; }
+.note-list-row .note-list-del:hover { transform: translateY(-50%); box-shadow: none; }
+.scratch-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px 0 16px; }
+
+/* New note in the rail */
+.rail-new {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; width: 100%; padding: 10px 0 8px; margin-bottom: 6px;
+  border: 0; border-radius: 20px; background: var(--w-accent); color: var(--w-accent-text); cursor: pointer;
+  font-size: 10.5px; font-weight: 600; box-shadow: 0 6px 18px -8px var(--w-accent);
+  transition: transform var(--w-anim) var(--w-ease), box-shadow var(--w-anim);
+}
+.rail-new:hover { transform: translateY(-1px); box-shadow: 0 10px 22px -8px var(--w-accent); }
+.rail-new:active { transform: scale(0.96); }
 .tab-body { flex: 1; min-height: 0; }
 
 /* ---------- note pane ---------- */
@@ -209,6 +233,7 @@
   .app { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
   .rail { order: 2; flex-direction: row; width: auto; padding: 4px 8px 8px; gap: 2px; }
   .rail-logo, .rail-bottom .rail-item:not(:first-child) { display: none; }
+  .rail-new { width: auto; padding: 6px 12px; margin: 0; flex: none; }
   .rail-zones, .rail-bottom { flex-direction: row; width: auto; margin: 0; }
   .rail-zones { flex: 1; justify-content: space-around; }
   .rail-item { padding: 6px 10px; width: auto; }

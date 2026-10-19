@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { VaultRecord, Vault } from "@writalin/vault";
-import { tagMatches, taskDate } from "@writalin/vault";
+import { isSystemNote, tagMatches, taskDate } from "@writalin/vault";
 import { isoDate, noteName, dirname, type VaultPath } from "@writalin/shared";
 import { Icon, toast } from "@writalin/ui";
 import { ContributionGraph, useContributions } from "@writalin/workspaces";
@@ -13,6 +13,7 @@ interface Props {
   onSwitchVault: (rec: VaultRecord | "new-folder" | "new-browser") => void;
   onOpen: (path: VaultPath, opts?: { line?: number }) => void;
   onNewNote: (folder?: string) => void;
+  onDelete: (path: VaultPath) => void;
   onZone: (zone: "calendar" | "tasks" | "activity") => void;
   initialTag?: string;
 }
@@ -23,7 +24,7 @@ function greeting(): string {
 }
 
 /** Vault switcher, folders, recent notes, tags, search and today's tasks. */
-export function Home({ vault, version, records, currentId, onSwitchVault, onOpen, onNewNote, onZone, initialTag }: Props) {
+export function Home({ vault, version, records, currentId, onSwitchVault, onOpen, onNewNote, onDelete, onZone, initialTag }: Props) {
   const activity = useContributions(vault, version, 52, "both");
   const todayWords = vault.activity.days[isoDate()]?.words ?? 0;
   const [q, setQ] = useState("");
@@ -38,7 +39,7 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
     let list = [...vault.notes.values()];
     if (tag) list = list.filter((n) => n.tags.some((t) => tagMatches(t, tag)));
     if (folder != null) list = list.filter((n) => dirname(n.path) === folder);
-    return list.filter((n) => n.path !== "Scratchpad.md").sort((a, b) => b.mtime - a.mtime).slice(0, tag || folder != null ? 200 : 12);
+    return list.filter((n) => !isSystemNote(n.path)).sort((a, b) => b.mtime - a.mtime).slice(0, tag || folder != null ? 200 : 12);
   }, [vault, version, tag, folder]);
   const dueToday = useMemo(
     () => vault.allTasks().filter((t) => t.status === "todo" && taskDate(t) != null && taskDate(t)! <= today).sort((a, b) => (taskDate(a)! + (a.time ?? "")).localeCompare(taskDate(b)! + (b.time ?? ""))),
@@ -121,10 +122,13 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
               )}
               <ul className="note-list">
                 {notes.map((n) => (
-                  <li key={n.path}>
+                  <li key={n.path} className="note-list-row">
                     <button className="w-glow" onClick={() => onOpen(n.path)}>
                       <span className="note-list-name">{n.name}</span>
                       <span className="note-list-meta">{dirname(n.path) || "—"} · {new Date(n.mtime).toLocaleDateString()}</span>
+                    </button>
+                    <button className="note-list-del" onClick={() => onDelete(n.path)} aria-label={`Delete ${n.name}`} title="Delete note">
+                      <Icon name="trash" size={14} />
                     </button>
                   </li>
                 ))}

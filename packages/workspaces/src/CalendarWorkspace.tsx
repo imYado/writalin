@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { NoteMeta, Task } from "@writalin/shared";
 import { addDays, isoDate, parseIsoDate, startOfWeek, noteName } from "@writalin/shared";
-import { createdDay, formatTaskLine, tagMatches, taskDate } from "@writalin/vault";
+import { createdDay, formatTaskLine, isSystemNote, newBlockId, REMINDERS_PATH, tagMatches, taskDate, type Vault } from "@writalin/vault";
 import { Icon, Modal, toast } from "@writalin/ui";
 import type { WorkspaceProps } from "./types";
+import { removeWithUndo } from "./undo";
 
 type View = "month" | "week" | "day";
 
@@ -13,18 +14,28 @@ interface DayItems {
 }
 
 const linkText = (s: string) => s.replace(/\[\[([^\]|]+)(\|([^\]]+))?\]\]/g, (_, a, __, b) => b ?? a);
+const isReminder = (t: Task) => t.path === REMINDERS_PATH;
 
 /**
  * Notes on the day they were created, plus reminders/events (dated task
  * lines). `standalone` is the full-page Calendar zone: bigger grid, and a
  * side panel with the selected day and what's coming up.
  */
-export function CalendarWorkspace({ vault, version, openNote, currentNote, standalone = false }: WorkspaceProps & { standalone?: boolean }) {
+export function CalendarWorkspace({ vault, version, openNote, standalone = false, focusDate }: WorkspaceProps & { standalone?: boolean; focusDate?: { date: string; nonce: number } }) {
   const [view, setView] = useState<View>("month");
   const [cursor, setCursor] = useState(() => new Date());
   const [selected, setSelected] = useState(() => isoDate());
   const [tag, setTag] = useState("");
   const [adding, setAdding] = useState<string | null>(null);
+
+  // Opened from a reminder link in a note: show that day.
+  useEffect(() => {
+    const d = focusDate && parseIsoDate(focusDate.date);
+    if (!d) return;
+    setCursor(d);
+    setSelected(focusDate!.date);
+    if (!standalone) setView("day");
+  }, [focusDate?.nonce]);
 
   const byDay = useMemo(() => {
     const map = new Map<string, DayItems>();
@@ -32,7 +43,7 @@ export function CalendarWorkspace({ vault, version, openNote, currentNote, stand
     for (const n of vault.notes.values()) {
       if (tag && !n.tags.some((t) => tagMatches(t, tag))) continue;
       const created = createdDay(n) ?? isoDate(new Date(n.mtime));
-      get(created).notes.push(n);
+      if (!isSystemNote(n.path)) get(created).notes.push(n);
       for (const t of n.tasks) {
         const d = taskDate(t);
         if (d && (!tag || t.tags.some((x) => tagMatches(x, tag)) || n.tags.some((x) => tagMatches(x, tag)))) get(d).tasks.push(t);
@@ -134,8 +145,16 @@ export function CalendarWorkspace({ vault, version, openNote, currentNote, stand
               <ul className="cal-items">
                 {entries.slice(0, limit).map((e) =>
                   e.kind === "task" ? (
-                    <li key={`t${e.t.path}${e.t.line}`} className={`cal-task${e.t.status === "done" ? " done" : ""}`}>
-                      <button onClick={() => openNote(e.t.path, { line: e.t.line })} title={e.t.text}>
+                    <li key={`t${e.t.path}${e.t.line}`} className={`cal-task${isReminder(e.t) ? " cal-reminder" : ""}${e.t.status === "done" ? " done" : ""}`}>
+                      <button
+                        onClick={() => {
+                          // Reminders aren't notes: show their day. Dated tasks open their note.
+                          if (!isReminder(e.t)) return openNote(e.t.path, { line: e.t.line });
+                          setSelected(key);
+                          if (!standalone) { setCursor(d); setView("day"); }
+                        }}
+                        title={e.t.text}
+                      >
                         {e.t.time && <span className="cal-time">{e.t.time}</span>}
                         {linkText(e.t.text)}
                       </button>
@@ -164,22 +183,21 @@ export function CalendarWorkspace({ vault, version, openNote, currentNote, stand
             .sort(([a], [b]) => a.localeCompare(b))
             .flatMap(([d, it]) => it.tasks.filter((t) => t.status === "todo").map((t) => ({ d, t })))
             .slice(0, 12)}
+          vault={vault}
           openNote={openNote}
           onAdd={() => setAdding(selected)}
           onToggle={(t) => void vault.toggleTask(t).catch((e) => toast((e as Error).message, { tone: "warn" }))}
+          onDelete={(t) => void removeWithUndo(vault, t.path, "Reminder", () => vault.deleteTask(t))}
         />
       )}
       </div>
       {adding && (
         <AddReminder
           date={adding}
-          defaultLink={currentNote ? noteName(currentNote) : ""}
-          noteNames={[...vault.notes.values()].map((n) => n.name)}
           onClose={() => setAdding(null)}
           onSave={async (line) => {
-            const path = vault.files.has("Reminders.md") ? "Reminders.md" : await vault.createNote("Reminders", { folder: "" });
-            await vault.append(path, line);
-            toast("Reminder added.");
+            await vault.appendTo(REMINDERS_PATH, line);
+            toast("Reminder added. Type [[ in a note to link to it.");
             setAdding(null);
           }}
         />
@@ -192,14 +210,16 @@ function compact(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
 }
 
-function DayPanel({ date, items, words, upcoming, openNote, onAdd, onToggle }: {
+function DayPanel({ date, items, words, upcoming, vault, openNote, onAdd, onToggle, onDelete }: {
   date: string;
   items: DayItems | undefined;
   words: number;
   upcoming: { d: string; t: Task }[];
+  vault: Vault;
   openNote: WorkspaceProps["openNote"];
   onAdd: () => void;
   onToggle: (t: Task) => void;
+  onDelete: (t: Task) => void;
 }) {
   const day = parseIsoDate(date) ?? new Date();
   const tasks = items?.tasks ?? [];
@@ -220,15 +240,39 @@ function DayPanel({ date, items, words, upcoming, openNote, onAdd, onToggle }: {
           <p className="w-muted w-small">Nothing on this day.</p>
         ) : (
           <ul className="cal-side-list">
-            {tasks.map((t) => (
-              <li key={`t${t.path}${t.line}`} className={t.status === "done" ? "done" : ""}>
-                <input type="checkbox" checked={t.status === "done"} onChange={() => onToggle(t)} aria-label={`Complete: ${t.text}`} />
-                <button onClick={() => openNote(t.path, { line: t.line })}>
-                  {t.time && <span className="cal-time">{t.time}</span>}
-                  {linkText(t.text)}
-                </button>
-              </li>
-            ))}
+            {tasks.map((t) => {
+              const linked = isReminder(t) && t.blockId ? vault.reminderBacklinks(t.blockId) : [];
+              return (
+                <li key={`t${t.path}${t.line}`} className={`cal-side-task${t.status === "done" ? " done" : ""}`}>
+                  <input type="checkbox" checked={t.status === "done"} onChange={() => onToggle(t)} aria-label={`Complete: ${t.text}`} />
+                  <div className="cal-side-task-body">
+                    {isReminder(t) ? (
+                      <span className="cal-side-text">
+                        {t.time && <span className="cal-time">{t.time}</span>}
+                        {linkText(t.text)}
+                      </span>
+                    ) : (
+                      <button onClick={() => openNote(t.path, { line: t.line })}>
+                        {t.time && <span className="cal-time">{t.time}</span>}
+                        {linkText(t.text)}
+                        <span className="w-muted"> · {noteName(t.path)}</span>
+                      </button>
+                    )}
+                    {linked.length > 0 && (
+                      <span className="cal-linked">
+                        <Icon name="link" size={12} />
+                        {linked.map((p) => <button key={p} className="cal-linked-note" onClick={() => openNote(p)}>{noteName(p)}</button>)}
+                      </span>
+                    )}
+                  </div>
+                  {isReminder(t) && (
+                    <button className="cal-delete" onClick={() => onDelete(t)} aria-label={`Delete reminder: ${t.text}`} title="Delete reminder">
+                      <Icon name="trash" size={14} />
+                    </button>
+                  )}
+                </li>
+              );
+            })}
             {notes.map((n) => (
               <li key={`n${n.path}`} className="cal-side-note">
                 <Icon name="file" size={14} />
@@ -248,7 +292,7 @@ function DayPanel({ date, items, words, upcoming, openNote, onAdd, onToggle }: {
             {upcoming.map(({ d, t }) => (
               <li key={`u${t.path}${t.line}`}>
                 <span className="cal-side-when">{parseIsoDate(d)!.toLocaleDateString(undefined, { weekday: "short", day: "numeric" })}</span>
-                <button onClick={() => openNote(t.path, { line: t.line })}>{linkText(t.text)}</button>
+                {isReminder(t) ? <span className="cal-side-text">{linkText(t.text)}</span> : <button onClick={() => openNote(t.path, { line: t.line })}>{linkText(t.text)}</button>}
               </li>
             ))}
           </ul>
@@ -258,10 +302,8 @@ function DayPanel({ date, items, words, upcoming, openNote, onAdd, onToggle }: {
   );
 }
 
-function AddReminder({ date, defaultLink, noteNames, onClose, onSave }: {
+function AddReminder({ date, onClose, onSave }: {
   date: string;
-  defaultLink: string;
-  noteNames: string[];
   onClose: () => void;
   onSave: (line: string) => void;
 }) {
@@ -269,7 +311,6 @@ function AddReminder({ date, defaultLink, noteNames, onClose, onSave }: {
   const [d, setD] = useState(date);
   const [time, setTime] = useState("");
   const [tags, setTags] = useState("");
-  const [link, setLink] = useState(defaultLink);
   const valid = text.trim() && parseIsoDate(d);
   return (
     <Modal title="Add reminder or event" onClose={onClose} width={440}>
@@ -277,7 +318,7 @@ function AddReminder({ date, defaultLink, noteNames, onClose, onSave }: {
         className="w-col"
         onSubmit={(e) => {
           e.preventDefault();
-          if (valid) onSave(formatTaskLine({ text, due: d, time: time || undefined, tags: tags.split(/[\s,]+/).filter(Boolean), link: link || undefined }));
+          if (valid) onSave(formatTaskLine({ text, due: d, time: time || undefined, tags: tags.split(/[\s,]+/).filter(Boolean), id: newBlockId() }));
         }}
       >
         <label className="w-field"><span>What</span><input value={text} onChange={(e) => setText(e.target.value)} placeholder="Essay due" required /></label>
@@ -286,11 +327,7 @@ function AddReminder({ date, defaultLink, noteNames, onClose, onSave }: {
           <label className="w-field"><span>Time (optional)</span><input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></label>
         </div>
         <label className="w-field"><span>Tags</span><input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="history exam" /></label>
-        <label className="w-field">
-          <span>Link to note</span>
-          <input list="reminder-notes" value={link} onChange={(e) => setLink(e.target.value)} placeholder="None" />
-          <datalist id="reminder-notes">{noteNames.map((n) => <option key={n} value={n} />)}</datalist>
-        </label>
+        <p className="w-muted w-small">To connect a note, type [[ in the note and pick this reminder. The calendar then shows the note here.</p>
         <div className="w-row" style={{ justifyContent: "flex-end" }}>
           <button type="button" className="w-btn" onClick={onClose}>Cancel</button>
           <button className="w-btn w-btn-primary" disabled={!valid}>Add</button>

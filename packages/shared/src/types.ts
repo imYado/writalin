@@ -49,6 +49,8 @@ export interface Task {
   tags: string[];
   links: string[];
   indent: string;
+  /** Obsidian block id (`^abc` at the end of the line), used to link to a reminder. */
+  blockId?: string;
 }
 
 export interface Flashcard {

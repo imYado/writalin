@@ -19,6 +19,21 @@ export interface EditorHost {
   resolveEmbed(target: string): Promise<string | null>;
   /** Slash-menu actions that need the app (insert drawing, PDF quote, start timer…). */
   action(name: HostAction): void;
+  /** Reminders for `[[` completion. `target()` gives the link target, e.g. `Reminders#^r-abc123`. */
+  reminders?(): ReminderOption[];
+  /** Text of a vault file (used to load a drawing for editing). */
+  readText?(target: string): Promise<string | null>;
+  /** Save a text file in the vault (used to save a drawing). */
+  writeText?(target: string, text: string): Promise<void>;
+  /** Save a pasted or dropped image; returns its vault path. */
+  saveImage?(file: File): Promise<string | null>;
+}
+
+export interface ReminderOption {
+  text: string;
+  /** YYYY-MM-DD */
+  date?: string;
+  target(): string;
 }
 
 export type HostAction = "start-timer" | "insert-pdf-quote" | "insert-drawing" | "insert-image" | "insert-citation";
