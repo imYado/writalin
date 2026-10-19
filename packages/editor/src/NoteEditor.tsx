@@ -6,7 +6,7 @@ import { writalinExtensions } from "./setup";
 import type { EditorHost } from "./host";
 import { focusCompartment, focusModeExtension } from "./focusMode";
 import { printCompartment, printLayout } from "./printLayout";
-import { insertText, selectedText, setColor, setLinePrefix, toggleWrap } from "./commands";
+import { insertText, selectedText, setColor, setHighlight, setLinePrefix, toggleWrap } from "./commands";
 import { startCompletion } from "@codemirror/autocomplete";
 import { outlineOf, type OutlineItem } from "./outline";
 
@@ -14,7 +14,10 @@ export interface NoteEditorHandle {
   view: EditorView | null;
   insert(text: string, opts?: { block?: boolean; cursorOffset?: number }): void;
   wrap(marker: string): void;
-  /** Colour the selected text, or highlight it in a colour; `null` clears it. */
+  /**
+   * Colour the selected text (a hex colour), or highlight it (`==…==`, with a
+   * colour emoji from HIGHLIGHT_COLORS, "" for the plain one); `null` clears it.
+   */
   color(kind: "text" | "highlight", color: string | null): void;
   /** Turn the selection into `[[link]]`, or with nothing selected open the note list inside `[[ ]]`. */
   linkToNote(): void;
@@ -118,7 +121,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
       },
       insert: (text, opts) => viewRef.current && insertText(viewRef.current, text, opts),
       wrap: (m) => viewRef.current && toggleWrap(viewRef.current, m),
-      color: (kind, c) => viewRef.current && setColor(viewRef.current, kind, c),
+      color: (kind, c) => viewRef.current && (kind === "highlight" ? setHighlight(viewRef.current, c) : setColor(viewRef.current, "text", c)),
       linkToNote: () => {
         const v = viewRef.current;
         if (!v) return;

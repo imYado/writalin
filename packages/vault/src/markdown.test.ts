@@ -126,6 +126,32 @@ describe("flashcards", () => {
     ]);
   });
 
+  it("reads the Spaced Repetition plugin's other card forms", () => {
+    const body = [
+      "Capital of France::Paris",
+      "Big cat ::: Lion <!--SR:!2026-11-01,3,250-->",
+      "std::vector holds items",
+      "",
+      "What does the",
+      "mitochondria do?",
+      "?",
+      "Makes energy",
+      "for the cell <!--SR:!2026-11-02,4,250-->",
+      "",
+      "Up",
+      "??",
+      "Down",
+    ].join("\n");
+    expect(parseFlashcards(body, "f.md").map((c) => [c.line, c.question, c.answer])).toEqual([
+      [0, "Capital of France", "Paris"],
+      [1, "Big cat", "Lion"],
+      [1, "Lion", "Big cat"],
+      [4, "What does the\nmitochondria do?", "Makes energy\nfor the cell"],
+      [10, "Up", "Down"],
+      [10, "Down", "Up"],
+    ]);
+  });
+
   it("cleans up AI flashcards into note lines", () => {
     const ai = "Here are your cards:\n1. **What is ATP?** :: The cell's energy currency\n- Mitosis makes::two identical cells\n\nQ: Where is DNA kept?\nA: In the nucleus\n";
     const cards = cardsFromText(ai);

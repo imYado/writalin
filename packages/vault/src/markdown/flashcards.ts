@@ -1,19 +1,55 @@
 import type { Flashcard, VaultPath } from "@writalin/shared";
 import { codeRanges, inRanges } from "./code";
 
-/** `Question :: Answer` on one line (Obsidian Spaced Repetition plugin syntax). */
-const CARD_RE = /^(?![ \t]*[-*+][ \t]+\[)[ \t]*(?:[-*+][ \t]+)?(.+?)[ \t]+::[ \t]+(.+?)[ \t]*$/;
+/**
+ * Cards in the Obsidian Spaced Repetition plugin's syntax:
+ * - `Question :: Answer` on one line (spaces optional), `:::` for a card that goes both ways;
+ * - several lines of question, a line with just `?` (or `??` both ways), then the answer,
+ *   ending at a blank line.
+ * The plugin's review notes (`<!--SR:…-->`) are left out of the answer.
+ */
+const CARD_RE = /^(?![ \t]*[-*+][ \t]+\[)[ \t]*(?:[-*+][ \t]+)?(.+?)[ \t]*(:::?)[ \t]*(.+?)[ \t]*$/;
+const SR_NOTE_RE = /\s*<!--SR:[^>]*-->\s*$/;
+const MULTI_SEP_RE = /^[ \t]*(\?\??)[ \t]*$/;
+
+/** A one-line card's parts, or null. Shared with the editor so both read cards the same way. */
+export function matchCardLine(line: string): { question: string; answer: string; reversed: boolean } | null {
+  const m = CARD_RE.exec(line.replace(SR_NOTE_RE, ""));
+  if (!m) return null;
+  const question = m[1]!.trim();
+  const answer = m[3]!.trim();
+  // `[key:: value]` is a Dataview field, and `std::vector` style code isn't a card.
+  if (!question || !answer || /\[[^\]]*$/.test(question) || /\w$/.test(question) && /^\w/.test(answer) && !/\s/.test(question)) return null;
+  return { question, answer, reversed: m[2] === ":::" };
+}
 
 export function parseFlashcards(body: string, path: VaultPath, lineOffset = 0): Flashcard[] {
   const code = codeRanges(body);
   const out: Flashcard[] = [];
-  let pos = 0;
-  body.split("\n").forEach((line, i) => {
-    if (!inRanges(code, pos)) {
-      const m = CARD_RE.exec(line);
-      if (m) out.push({ path, line: i + lineOffset, question: m[1]!.trim(), answer: m[2]!.trim() });
+  const lines = body.split("\n");
+  const starts: number[] = [];
+  for (let i = 0, pos = 0; i < lines.length; pos += lines[i]!.length + 1, i++) starts.push(pos);
+  const blank = (i: number) => i < 0 || i >= lines.length || !lines[i]!.trim();
+  const push = (line: number, question: string, answer: string, reversed: boolean) => {
+    out.push({ path, line: line + lineOffset, question, answer });
+    if (reversed) out.push({ path, line: line + lineOffset, question: answer, answer: question });
+  };
+  lines.forEach((line, i) => {
+    if (inRanges(code, starts[i]!)) return;
+    const sep = MULTI_SEP_RE.exec(line);
+    if (sep) {
+      let q = i;
+      while (!blank(q - 1) && !MULTI_SEP_RE.test(lines[q - 1]!)) q--;
+      let a = i;
+      while (!blank(a + 1) && !MULTI_SEP_RE.test(lines[a + 1]!)) a++;
+      if (q === i || a === i) return;
+      const question = lines.slice(q, i).join("\n").trim();
+      const answer = lines.slice(i + 1, a + 1).join("\n").replace(SR_NOTE_RE, "").trim();
+      if (question && answer) push(q, question, answer, sep[1] === "??");
+      return;
     }
-    pos += line.length + 1;
+    const m = matchCardLine(line);
+    if (m) push(i, m.question, m.answer, m.reversed);
   });
   return out;
 }
