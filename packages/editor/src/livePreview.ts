@@ -1,5 +1,5 @@
 import { syntaxTree } from "@codemirror/language";
-import { RangeSetBuilder, type EditorState, type Range } from "@codemirror/state";
+import { RangeSetBuilder, StateEffect, StateField, type EditorState, type Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { editorHost } from "./host";
 import { parseMediaLine } from "./media";
@@ -149,6 +149,23 @@ const HIGHLIGHT_RE = /==((?:[^=\n]|=(?!=))+)==/g;
 const COLOR_TAG_RE = /<(span|mark) style="(color|background): ?(#[0-9a-fA-F]{3,8})">|<\/(span|mark)>/g;
 /** `Question :: Answer` cards (same rule as the vault's parser): not tasks, spaces around `::`. */
 const CARD_RE = /^(?![ \t]*[-*+][ \t]+\[)([ \t]*(?:[-*+][ \t]+)?)(.+?)([ \t]+::[ \t]+)(.+?)[ \t]*$/;
+
+/** Flashcards whose answer was uncovered with "Show answer", by the start of their line. */
+const toggleCard = StateEffect.define<number>({ map: (pos, ch) => ch.mapPos(pos) });
+const shownCards = StateField.define<Set<number>>({
+  create: () => new Set(),
+  update(set, tr) {
+    let next = set;
+    if (tr.docChanged && set.size) next = new Set([...set].map((p) => tr.changes.mapPos(p)));
+    for (const e of tr.effects) {
+      if (!e.is(toggleCard)) continue;
+      if (next === set) next = new Set(set);
+      if (next.has(e.value)) next.delete(e.value);
+      else next.add(e.value);
+    }
+    return next;
+  },
+});
 
 function build(view: EditorView): DecorationSet {
   const { state } = view;
@@ -321,7 +338,9 @@ function build(view: EditorView): DecorationSet {
       if (start === line.from && /^#+\s/.test(line.text)) continue;
       decos.push(Decoration.mark({ class: "cm-tag", attributes: { "data-tag": m[2]!.slice(1) } }).range(start, start + m[2]!.length));
     }
-    // Flashcards: the answer stays blurred until you point at it (or put the cursor on the line).
+    // Flashcards: the answer sits under the question, covered until "Show answer"
+    // (or until the cursor is on the line, so it can be edited).
+    const shown = state.field(shownCards, false);
     for (let pos = from; pos <= to; ) {
       const line = state.doc.lineAt(pos);
       pos = line.to + 1;
@@ -333,9 +352,14 @@ function build(view: EditorView): DecorationSet {
       const end = a + m[4]!.length;
       lineDeco(line.from, "cm-card");
       decos.push(Decoration.mark({ class: "cm-card-q" }).range(q, sep));
-      if (isActive(line.from)) decos.push(Decoration.mark({ class: "cm-card-sep-raw" }).range(sep, a));
-      else decos.push(Decoration.replace({ widget: new CardSeparator() }).range(sep, a));
-      decos.push(Decoration.mark({ class: isActive(line.from) ? "cm-card-a cm-card-a-shown" : "cm-card-a" }).range(a, end));
+      if (isActive(line.from)) {
+        decos.push(Decoration.mark({ class: "cm-card-sep-raw" }).range(sep, a));
+        decos.push(Decoration.mark({ class: "cm-card-a cm-card-a-editing" }).range(a, end));
+        continue;
+      }
+      const open = !!shown?.has(line.from);
+      decos.push(Decoration.replace({ widget: new CardToggle(line.from, open) }).range(sep, a));
+      decos.push(Decoration.mark({ class: open ? "cm-card-a cm-card-a-shown" : "cm-card-a", attributes: open ? {} : { "aria-hidden": "true" } }).range(a, end));
     }
     // Colour tags can nest (a coloured highlight around red text), so pair them per line with a stack.
     for (let pos = from; pos <= to; ) {
@@ -384,15 +408,33 @@ function decodeURIComponentSafe(s: string): string {
   }
 }
 
-class CardSeparator extends WidgetType {
-  override eq() {
-    return true;
+/** The "Show answer" button between a flashcard's question and its covered answer. */
+class CardToggle extends WidgetType {
+  constructor(readonly line: number, readonly open: boolean) {
+    super();
   }
-  toDOM() {
-    const s = document.createElement("span");
-    s.className = "cm-card-sep";
-    s.setAttribute("aria-label", "answer:");
-    return s;
+  override eq(o: CardToggle) {
+    return o.line === this.line && o.open === this.open;
+  }
+  toDOM(view: EditorView) {
+    const wrap = document.createElement("span");
+    wrap.className = "cm-card-toggle";
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cm-card-show";
+    b.textContent = this.open ? "Hide answer" : "Show answer";
+    b.setAttribute("aria-expanded", String(this.open));
+    // Keep the cursor where it is, so the card stays rendered.
+    b.addEventListener("mousedown", (e) => e.preventDefault());
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      view.dispatch({ effects: toggleCard.of(this.line) });
+    });
+    wrap.append(b);
+    return wrap;
+  }
+  override ignoreEvent() {
+    return true;
   }
 }
 
@@ -418,14 +460,19 @@ export const livePreview = ViewPlugin.fromClass(
       this.decorations = build(view);
     }
     update(u: ViewUpdate) {
-      if (u.docChanged || u.viewportChanged || u.selectionSet || u.focusChanged || syntaxTree(u.startState) !== syntaxTree(u.state)) {
+      if (
+        u.docChanged || u.viewportChanged || u.selectionSet || u.focusChanged ||
+        syntaxTree(u.startState) !== syntaxTree(u.state) ||
+        u.startState.field(shownCards, false) !== u.state.field(shownCards, false)
+      ) {
         this.decorations = build(u.view);
       }
     }
   },
   {
     decorations: (v) => v.decorations,
-    provide: (p) =>
+    provide: (p) => [
+      shownCards,
       EditorView.atomicRanges.of((view) => {
         // Only hidden markup and widgets act as one unit for the cursor. Styled
         // text (bold, links, flashcards…) must stay editable letter by letter.
@@ -435,6 +482,7 @@ export const livePreview = ViewPlugin.fromClass(
         for (const it = value.decorations.iter(); it.value; it.next()) if (it.value.point) b.add(it.from, it.to, it.value);
         return b.finish();
       }),
+    ],
   },
 );
 

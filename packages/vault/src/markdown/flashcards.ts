@@ -49,8 +49,9 @@ export function cardsFromText(text: string): { question: string; answer: string 
 }
 
 /** Cards as lines the note (and Obsidian's Spaced Repetition plugin) understands. */
-export function formatCards(cards: { question: string; answer: string }[]): string {
+export function formatCards(cards: { question: string; answer: string }[], opts: { divider?: boolean } = {}): string {
   // `::` inside a side would split the card in the wrong place.
   const side = (s: string) => s.replace(/::/g, ":").trim();
-  return cards.map((c) => `${side(c.question)} :: ${side(c.answer)}`).join("\n");
+  // Blank lines around `---` keep it a divider rather than turning the card above into a heading.
+  return cards.map((c) => `${side(c.question)} :: ${side(c.answer)}`).join(opts.divider ? "\n\n---\n\n" : "\n");
 }
