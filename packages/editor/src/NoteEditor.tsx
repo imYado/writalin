@@ -74,6 +74,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
           writeText: (t, text) => cb.current.host.writeText?.(t, text) ?? Promise.resolve(),
           saveImage: (f) => cb.current.host.saveImage?.(f) ?? Promise.resolve(null),
           createNote: (name) => cb.current.host.createNote?.(name) ?? Promise.resolve(),
+          appCommands: () => cb.current.host.appCommands?.() ?? [],
         },
         placeholder: props.placeholder,
         focusMode: props.focusMode,

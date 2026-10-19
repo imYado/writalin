@@ -166,12 +166,31 @@ function tagSource(ctx: CompletionContext): CompletionResult | null {
   };
 }
 
+/** The app's Ctrl+K commands, after the blocks: picking one removes the `/…` and runs it. */
+function commandOptions(ctx: CompletionContext, q: string): Completion[] {
+  const cmds = ctx.state.facet(editorHost)?.appCommands?.() ?? [];
+  return cmds
+    .filter((c) => !q || `${c.title} ${c.description ?? ""} ${c.group} ${c.keywords ?? ""}`.toLowerCase().includes(q))
+    .map((c, i) => ({
+      label: "/" + (q || c.title),
+      displayLabel: c.title,
+      detail: c.description,
+      type: "function",
+      boost: -i / 1000,
+      section: { name: `Commands · ${c.group}`, rank: 2e9 + 1 },
+      apply: (view: EditorView, _c: Completion, from: number, to: number) => {
+        view.dispatch({ changes: { from, to, insert: "" } });
+        c.run();
+      },
+    }));
+}
+
 /** Matches slash items on their keywords too (e.g. "/todo" finds Checklist). */
 function slashKeywordSource(ctx: CompletionContext): CompletionResult | null {
   const r = slashSource(ctx);
   if (!r) return null;
   const q = ctx.state.sliceDoc(r.from + 1, ctx.pos).toLowerCase().trim();
-  if (!q) return r;
+  if (!q) return { ...r, options: [...r.options, ...commandOptions(ctx, "")], filter: false, validFor: undefined };
   const options = SLASH_ITEMS.filter((it) => `${it.label} ${it.keywords ?? ""}`.toLowerCase().includes(q)).map((it, i) => ({
     label: "/" + q,
     displayLabel: it.label,
@@ -181,7 +200,7 @@ function slashKeywordSource(ctx: CompletionContext): CompletionResult | null {
     boost: 99 - i,
     section: it.action ? "Insert" : "Blocks",
   }));
-  return { from: r.from, options, filter: false };
+  return { from: r.from, options: [...options, ...commandOptions(ctx, q)], filter: false };
 }
 
 export const writalinCompletions = autocompletion({
@@ -189,5 +208,5 @@ export const writalinCompletions = autocompletion({
   icons: false,
   closeOnBlur: true,
   activateOnTyping: true,
-  maxRenderedOptions: 30,
+  maxRenderedOptions: 300,
 });
