@@ -25,6 +25,8 @@ export interface EditorHost {
   readText?(target: string): Promise<string | null>;
   /** Save a text file in the vault (used to save a drawing). */
   writeText?(target: string, text: string): Promise<void>;
+  /** Make an empty note with this name (from "Create note" in the `[[` list). */
+  createNote?(name: string): Promise<void>;
   /** Save a pasted or dropped image; returns its vault path. */
   saveImage?(file: File): Promise<string | null>;
 }
