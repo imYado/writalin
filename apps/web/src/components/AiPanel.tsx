@@ -201,7 +201,7 @@ export function AiPanel({ vault, account, getSource, workspace, canInsert, inser
       {error && <p className="ai-error" role="alert">{error}</p>}
       {result && (() => {
         const cards = result.tool === "flashcards" ? cardsFromText(result.text) : [];
-        const body = cards.length ? formatCards(cards) : result.text;
+        const body = cards.length ? formatCards(cards, { divider: true }) : result.text;
         const markdown = result.tool === "flashcards" && cards.length ? `### Flashcards\n${body}` : body;
         const full = result.footer ? `${markdown}\n\n${result.footer}` : markdown;
         return (

@@ -147,10 +147,16 @@
 /* Flashcards: `Question :: Answer` */
 .w-editor .cm-card { background: linear-gradient(90deg, var(--w-accent-soft), transparent 85%); border-radius: 10px; }
 .w-editor .cm-card-q { font-weight: 600; }
-.w-editor .cm-card-sep { display: inline-block; width: 18px; height: 1em; margin: 0 8px; vertical-align: -0.15em; background: currentColor; opacity: 0.35;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12h15M13 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12h15M13 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat; }
 .w-editor .cm-card-sep-raw { color: var(--w-accent); font-weight: 600; }
-.w-editor .cm-card-a { filter: blur(5px); transition: filter var(--w-anim); }
-.w-editor .cm-card:hover .cm-card-a, .w-editor .cm-card-a-shown { filter: none; }
-@media print { .w-editor .cm-card-a { filter: none; } }
+/* The answer goes on its own row under the question, covered (not blurred) until shown. */
+.w-editor .cm-card-toggle { display: block; padding: 6px 0 0; line-height: 1; }
+/* The cursor helpers CodeMirror puts around the button would add an empty row under it. */
+.w-editor .cm-card .cm-card-toggle ~ .cm-widgetBuffer, .w-editor .cm-card .cm-card-toggle + .cm-widgetBuffer { display: none; }
+.w-editor .cm-card-show { font: 600 12px/1 var(--w-font-ui, inherit); padding: 6px 12px; border: 0; border-radius: 999px; cursor: pointer;
+  color: var(--w-accent-text); background: var(--w-accent); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.w-editor .cm-card-show[aria-expanded="true"] { color: var(--w-text-muted); background: var(--w-soft-2); box-shadow: none; }
+.w-editor .cm-card-a { display: block; margin: 4px 0 6px; padding: 4px 8px; min-height: 32px; border-radius: 8px; color: transparent; background: var(--w-soft-2); user-select: none; }
+.w-editor .cm-card-a:not(.cm-card-a-shown, .cm-card-a-editing) * { color: transparent !important; background: none !important; }
+.w-editor .cm-card-a-shown { color: inherit; background: var(--w-bg, transparent); user-select: auto; }
+.w-editor .cm-card-a-editing { display: inline; margin: 0; padding: 0; min-height: 0; color: inherit; background: none; user-select: auto; }
+@media print { .w-editor .cm-card-a { color: inherit; background: none; } .w-editor .cm-card-show { display: none; } }

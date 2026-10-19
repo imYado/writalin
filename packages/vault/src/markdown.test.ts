@@ -136,6 +136,9 @@ describe("flashcards", () => {
     ]);
     const lines = formatCards(cards);
     expect(parseFlashcards(lines, "f.md")).toHaveLength(3);
+    const divided = formatCards(cards, { divider: true });
+    expect(divided.split("\n\n---\n\n")).toHaveLength(3);
+    expect(parseFlashcards(divided, "f.md")).toHaveLength(3);
   });
 });
 
