@@ -8,6 +8,7 @@ import {
 } from "@writalin/ui";
 import { ActivityWorkspace, CalendarWorkspace, ImageWorkspace, NoteWorkspace, ScratchpadWorkspace, TasksWorkspace, removeWithUndo, useVaultVersion, type WorkspaceAiSource, type WorkspaceProps } from "@writalin/workspaces";
 import { AiPanel } from "./AiPanel";
+import { planEdits } from "../aiEdits";
 import { Home } from "./Home";
 import { NotePane, type NotePaneHandle } from "./NotePane";
 import { PointMenu, type MenuSection } from "./PointMenu";
@@ -527,13 +528,27 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             const sel = e.selection();
             const doc = e.view?.state.doc.toString() ?? "";
             if (tool === "whereWasI") return { text: doc.slice(Math.max(0, e.cursor() - 6000), e.cursor()), label: "the text before your cursor" };
-            if (sel.trim()) return { text: sel, label: `your selection (${sel.trim().split(/\s+/).length} words)` };
-            return { text: doc, label: `the whole note “${noteName(layout.note!)}”` };
+            const r = e.view?.state.selection.main;
+            if (sel.trim() && r) return { text: sel, label: `your selection (${sel.trim().split(/\s+/).length} words)`, range: { from: r.from, to: r.to } };
+            return { text: doc, label: `the whole note “${noteName(layout.note!)}”`, range: { from: 0, to: doc.length } };
           }}
           workspace={showLeft ? wsAi : null}
           focusWorkspace={aiFocus}
           canInsert={!noNote}
           insert={(md) => ed()?.insert(md, { block: true })}
+          suggestEdits={(edits, range, summary) => {
+            const e = ed();
+            const doc = e?.view?.state.doc.toString();
+            if (!e || doc == null) return null;
+            const plan = planEdits(doc, edits, range ?? { from: 0, to: doc.length });
+            e.suggest(plan.changes, summary);
+            // Close the panel so the changes in the note can be seen and approved there.
+            if (plan.changes.length) {
+              setDockOpen(null);
+              if (plan.missed) toast(`${plan.missed} of the AI's changes didn't match the note and were left out.`, { tone: "warn" });
+            }
+            return { shown: plan.changes.length, missed: plan.missed };
+          }}
           onOpenSettings={() => { setDockOpen(null); setSettingsOpen("ai"); }}
           autoRun={aiRun}
           onStudy={(cards) => setStudy({ cards, title: "Study the new cards" })}

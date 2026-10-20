@@ -31,6 +31,26 @@ export const AI_TOOLS = {
 
 export type AiTool = keyof typeof AI_TOOLS;
 
+const EDIT_FORMAT = [
+  "Edit format: the first line is exactly `@@edit`. The second line is one short sentence saying what you changed. Then one block per change:",
+  "<<<FIND",
+  "text copied exactly from the note, character for character, including its Markdown symbols; just enough to be unique",
+  "===REPLACE",
+  "the new text for that part (leave it empty to delete the part)",
+  ">>>END",
+  "Change only what the request needs and keep everything else as it is, including the student's Markdown, links, `Question :: Answer` lines and formatting.",
+  "Keep each block small: one paragraph, list or section. To add new text, FIND the line it goes after and REPLACE it with that same line followed by the new text. To add at the very end of the note, leave FIND empty.",
+  "Never put the edits in a code block and write nothing after the last >>>END.",
+].join("\n");
+
+/** Ask about the student's own note, where the AI may also change it (shown to them for approval first). */
+function editInstruction(mode: "auto" | "force"): string {
+  return mode === "force"
+    ? `The <note> below is the student's own note. Do what the student asks to it, and reply only with edits.\n\n${EDIT_FORMAT}`
+    : "The <note> below is the student's own note, and you can change it. If the student asks you to change, fix, rewrite, shorten, expand, reorder, translate, format or add to the note, reply with edits in the edit format below instead of an answer; they see them as suggestions to accept or reject. " +
+        `Otherwise answer their question using the note as context; if the note doesn't contain the answer, say so briefly and answer from general knowledge.\n\n${EDIT_FORMAT}`;
+}
+
 export type QuizKind = "choice" | "written";
 export interface ToolOptions {
   quizKind?: QuizKind;
@@ -38,6 +58,8 @@ export interface ToolOptions {
   count?: number;
   /** Extra wishes typed by the student, e.g. "focus on chapter 2" or "make it harder". */
   extra?: string;
+  /** On a question about the student's own note: let the AI suggest edits ("auto"), or only edits ("force"). */
+  edit?: "auto" | "force";
   /** Earlier answers in this conversation, each followed by the student's next question. */
   thread?: { answer: string; followUp: string }[];
 }
@@ -195,7 +217,10 @@ export async function runTool(
   onDelta?: (text: string) => void,
   signal?: AbortSignal,
 ): Promise<{ text: string; model: string }> {
-  const instruction = tool === "quiz" ? quizInstruction(opts.quizKind ?? "choice", opts.count ?? 5) : AI_TOOLS[tool];
+  const instruction =
+    tool === "quiz" ? quizInstruction(opts.quizKind ?? "choice", opts.count ?? 5)
+    : tool === "ask" && text && opts.edit ? editInstruction(opts.edit)
+    : AI_TOOLS[tool];
   const first = [
     instruction,
     opts.extra ? `\nExtra wishes from the student (follow them, but keep the layout and format rules above): ${opts.extra}` : "",
@@ -209,7 +234,8 @@ export async function runTool(
     messages.push({ role: "user", content: `Follow-up from the student (same note, same format rules): ${turn.followUp}` });
   }
   const out = await callModel(target, messages, onDelta, signal);
-  return { ...out, text: tidyAiMarkdown(out.text) };
+  // Edits must match the note exactly, so they're passed on untouched.
+  return { ...out, text: /^\s*@@edit/.test(out.text) ? out.text : tidyAiMarkdown(out.text) };
 }
 
 async function callModel(target: AiTarget, messages: ChatMessage[], onDelta?: (text: string) => void, signal?: AbortSignal): Promise<{ text: string; model: string }> {

@@ -9,6 +9,7 @@ import { printCompartment, printLayout } from "./printLayout";
 import { insertText, selectedText, setColor, setHighlight, setLinePrefix, toggleWrap } from "./commands";
 import { startCompletion } from "@codemirror/autocomplete";
 import { outlineOf, type OutlineItem } from "./outline";
+import { suggestChanges } from "./suggestions";
 
 export interface NoteEditorHandle {
   view: EditorView | null;
@@ -33,6 +34,8 @@ export interface NoteEditorHandle {
   foldAll(): void;
   unfoldAll(): void;
   outline(): OutlineItem[];
+  /** Show AI changes in the note for the person to accept or reject (see suggestions.ts). */
+  suggest(changes: { from: number; to: number; insert: string }[], note?: string): void;
 }
 
 export interface NoteEditorProps {
@@ -158,6 +161,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(function
       setCursor: (pos) => viewRef.current?.dispatch({ selection: { anchor: Math.min(pos, viewRef.current.state.doc.length) } }),
       focus: () => viewRef.current?.focus(),
       foldAll: () => viewRef.current && foldAll(viewRef.current),
+      suggest: (changes, note) => viewRef.current && suggestChanges(viewRef.current, changes, note),
       unfoldAll: () => viewRef.current && unfoldAll(viewRef.current),
       outline: () => (viewRef.current ? outlineOf(viewRef.current.state) : []),
     }),

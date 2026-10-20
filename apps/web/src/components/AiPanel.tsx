@@ -3,6 +3,7 @@ import { Icon, toast, type IconName } from "@writalin/ui";
 import { cardsFromText, formatCards, parseQuiz, type QuizQuestion, type Vault } from "@writalin/vault";
 import type { AiSourceText, WorkspaceAiSource } from "@writalin/workspaces";
 import { aiApi, ApiError, type Account, type AiState, type AiTool } from "../api";
+import { isEditAnswer, parseEdits, type AiEdit } from "../aiEdits";
 
 const TOOLS: { id: AiTool; label: string; desc: string; icon: IconName }[] = [
   { id: "explain", label: "Explain simply", desc: "Plain words and an example", icon: "bulb" },
@@ -14,7 +15,17 @@ const TOOLS: { id: AiTool; label: string; desc: string; icon: IconName }[] = [
   { id: "whereWasI", label: "Where was I?", desc: "Recap and next step", icon: "clock" },
 ];
 
-export type AiSource = AiSourceText;
+/** Text for the AI; `range` marks it as part of the open note (the selection, or all of it), which the AI may edit. */
+export type AiSource = AiSourceText & { range?: { from: number; to: number } };
+
+/** One-tap edits, like Notion's: they always come back as changes to approve. */
+const QUICK_EDITS = [
+  { label: "Fix spelling", q: "Fix spelling, grammar and punctuation. Change nothing else." },
+  { label: "Make shorter", q: "Make this shorter and clearer, keeping every key fact." },
+  { label: "Simpler words", q: "Rewrite this in simpler words that are easier to read, keeping the meaning." },
+  { label: "Make longer", q: "Expand this with more detail and an example where it helps." },
+  { label: "Tidy layout", q: "Improve the layout: add headings, bullet points and bold key terms where they help. Keep the wording." },
+];
 
 interface Props {
   vault: Vault;
@@ -35,6 +46,8 @@ interface Props {
   onStudy: (cards: { question: string; answer: string }[]) => void;
   /** Play a quiz the AI just made. */
   onPlayQuiz: (questions: QuizQuestion[]) => void;
+  /** Show the AI's edits in the open note for approval, inside `range`. */
+  suggestEdits?: (edits: AiEdit[], range: { from: number; to: number } | undefined, summary: string) => EditResult | null;
 }
 
 /** The AI dock panel. Opt-in, signed-in only; the key is used on the server, never here. */
@@ -65,6 +78,12 @@ interface Turn {
   stopped?: boolean;
 }
 
+/** What happened when edits were shown in the note. */
+interface EditResult {
+  shown: number;
+  missed: number;
+}
+
 /** One answer and its follow-ups, with what was read so follow-ups read the same thing. */
 interface Convo {
   id: string;
@@ -75,6 +94,12 @@ interface Convo {
   footer?: string;
   /** Read from the side pane (this scope of this file): a follow-up question re-picks the pages that match it. */
   ws?: { name: string; scope: string };
+  /** Where in the note the text came from. */
+  range?: { from: number; to: number };
+  /** Read from the open note, so the AI may suggest edits to it. */
+  editable?: boolean;
+  /** The edit questions were quick edits: answers are always edits. */
+  forceEdit?: boolean;
   at: number;
 }
 
@@ -105,30 +130,32 @@ const ago = (t: number) => {
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 60 * 24 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
 };
 
-export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, onOpenSettings, autoRun, onStudy, onPlayQuiz }: Props) {
+export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, onOpenSettings, autoRun, onStudy, onPlayQuiz, suggestEdits }: Props) {
   const [enabled, setEnabled] = useState(vault.settings.aiEnabled);
   const [state, setState] = useState<AiState | null>(null);
   const [busy, setBusy] = useState<AiTool | null>(null);
   const vid = `${vault.store.kind}:${vault.store.name}`;
   const [recent, setRecent] = useState<Convo[]>(() => readRecent(vid));
-  const [openId, setOpenId] = useState<string | null>(() => openConvo.get(vid) ?? null);
+  const [openId, setOpenIdState] = useState<string | null>(() => openConvo.get(vid) ?? null);
   const convo = recent.find((c) => c.id === openId) ?? null;
-  useEffect(() => void openConvo.set(vid, openId), [vid, openId]);
+  // Saved straight away, not in an effect: showing edits closes the panel in the same update.
+  const setOpenId = (id: string | null) => {
+    openConvo.set(vid, id);
+    setOpenIdState(id);
+  };
+  const recentRef = useRef(recent);
+  const saveRecent = (next: Convo[]) => {
+    recentRef.current = next;
+    writeRecent(vid, next);
+    setRecent(next);
+  };
   /** Save a new or longer conversation and show it. */
   const keep = (c: Convo) => {
-    setRecent((list) => {
-      const next = [c, ...list.filter((x) => x.id !== c.id)];
-      writeRecent(vid, next);
-      return next;
-    });
+    saveRecent([c, ...recentRef.current.filter((x) => x.id !== c.id)]);
     setOpenId(c.id);
   };
   const forget = (id: string) => {
-    setRecent((list) => {
-      const next = list.filter((x) => x.id !== id);
-      writeRecent(vid, next);
-      return next;
-    });
+    saveRecent(recentRef.current.filter((x) => x.id !== id));
     if (openId === id) setOpenId(null);
   };
   /** The answer so far, while it's still being written. */
@@ -138,6 +165,13 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
   /** A slow step before the answer starts, e.g. reading scanned pages. */
   const [progress, setProgress] = useState<string | null>(null);
   const [followUp, setFollowUp] = useState("");
+  /** The last edits shown in the note, by conversation. */
+  const [edited, setEdited] = useState<{ id: string; turn: number; r: EditResult | null } | null>(null);
+  const showEdits = (c: Convo, turn: number, range = c.range) => {
+    const p = parseEdits(c.turns[turn]?.a ?? "");
+    const r = p && p.edits.length && suggestEdits ? suggestEdits(p.edits, range, p.summary.split("\n")[0] ?? "") : null;
+    setEdited({ id: c.id, turn, r });
+  };
   /** Text handed over from elsewhere (a PDF), used instead of the note until cleared. */
   const [pinned, setPinned] = useState<AiSource | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -166,7 +200,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
   useEffect(() => {
     if (account && enabled) void aiApi.state().then(setState).catch(() => {});
   }, [account, enabled]);
-  const runRef = useRef<(tool: AiTool, from?: AiSource) => Promise<void>>(undefined);
+  const runRef = useRef<(tool: AiTool, from?: AiSource, quick?: string) => Promise<void>>(undefined);
   const ran = useRef(0);
   useEffect(() => {
     if (!autoRun || ran.current === autoRun.nonce || !account || !enabled) return;
@@ -205,14 +239,14 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
 
   const fromWorkspace = use === "workspace" && !!workspace && !pinned;
   /** Ask the AI, streaming the answer in. Returns the answer, or null when it failed or was stopped empty. */
-  const ask = async (tool: AiTool, text: string, q: string | undefined, thread?: Turn[], next?: string) => {
+  const ask = async (tool: AiTool, text: string, q: string | undefined, edit: "auto" | "force" | undefined, thread?: Turn[], next?: string) => {
     const stop = new AbortController();
     stopRef.current = stop;
     partialRef.current = "";
     // Each earlier answer, then the question that came after it; the last one is the new question.
     const pairs = thread?.map((t, i) => ({ answer: t.a, followUp: (i + 1 < thread.length ? thread[i + 1]!.q : next) ?? "" }));
     try {
-      const r = await aiApi.run(tool, text, q, { quizKind, count: quizCount, extra: extra.trim() || undefined, thread: pairs?.slice(-8), signal: stop.signal }, (soFar) => {
+      const r = await aiApi.run(tool, text, q, { quizKind, count: quizCount, extra: extra.trim() || undefined, edit, thread: pairs?.slice(-8), signal: stop.signal }, (soFar) => {
         partialRef.current = soFar;
         setPartial(soFar);
       });
@@ -226,10 +260,10 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       stopRef.current = null;
     }
   };
-  const run = async (tool: AiTool, from?: AiSource) => {
+  const run = async (tool: AiTool, from?: AiSource, quick?: string) => {
     setError(null);
     let src = from ?? pinned ?? null;
-    const q = tool === "ask" ? question.trim() : undefined;
+    const q = tool === "ask" ? quick ?? question.trim() : undefined;
     const ws = !src && fromWorkspace ? { name: workspace!.name, scope } : undefined;
     if (ws) {
       setBusy(tool);
@@ -244,13 +278,21 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       setBusy(null);
       return setError("Open a note with some text, or a PDF on the side. You can also just ask a question above.");
     }
+    // A question about the open note may come back as edits to it.
+    const editable = tool === "ask" && !!text && !!src?.range;
+    if (quick && !editable) {
+      setBusy(null);
+      return setError("Open a note with some text first. Select a part to edit only that.");
+    }
     setBusy(tool);
     setOpenId(null);
     try {
-      const turn = await ask(tool, text, q);
+      const turn = await ask(tool, text, q, editable ? (quick ? "force" : "auto") : undefined);
       if (!turn) return;
-      keep({ id: crypto.randomUUID(), tool, turns: [{ ...turn, q }], text, label: text ? src!.label : "", footer: text ? src?.footer : undefined, ws, at: Date.now() });
-      if (tool === "ask") setQuestion("");
+      const c: Convo = { id: crypto.randomUUID(), tool, turns: [{ ...turn, q }], text, label: text ? src!.label : "", footer: text ? src?.footer : undefined, ws, range: editable ? src!.range : undefined, editable, forceEdit: !!quick, at: Date.now() };
+      keep(c);
+      if (editable && !turn.stopped && isEditAnswer(turn.a)) showEdits(c, 0);
+      if (tool === "ask" && !quick) setQuestion("");
     } finally {
       setBusy(null);
       setPartial(null);
@@ -262,17 +304,24 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
     if (!q) return;
     setError(null);
     setBusy(c.tool);
-    let { text, label, footer } = c;
+    let { text, label, footer, range } = c;
     try {
+      // Edits are made against the note as it is now, after any accepted changes.
+      if (c.editable) {
+        const src = getSource("ask");
+        if (src?.text.trim() && src.range) ({ text, label, range } = src);
+      }
       // A question about a long PDF re-picks the pages that match the new question.
       if (c.ws && c.tool === "ask" && workspace?.name === c.ws.name) {
         const src = await workspace.build(c.ws.scope, `${q} ${c.turns[0]?.q ?? ""}`, setProgress).catch(() => null);
         setProgress(null);
         if (src?.text.trim()) ({ text, label, footer } = src);
       }
-      const turn = await ask(c.tool, text, c.turns[0]?.q, c.turns, q);
+      const turn = await ask(c.tool, text, c.turns[0]?.q, c.editable ? (c.forceEdit ? "force" : "auto") : undefined, c.turns, q);
       if (!turn) return;
-      keep({ ...c, text, label, footer, turns: [...c.turns, { ...turn, q }], at: Date.now() });
+      const next = { ...c, text, label, footer, range, turns: [...c.turns, { ...turn, q }], at: Date.now() };
+      keep(next);
+      if (c.editable && !turn.stopped && isEditAnswer(turn.a)) showEdits(next, next.turns.length - 1);
       setFollowUp("");
     } finally {
       setBusy(null);
@@ -291,6 +340,17 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       : noteSrc?.text.trim()
         ? `Using ${noteSrc.label}`
         : "No note text yet. Questions still work.";
+  /** The answer while it's written; edits show as progress, not raw blocks. */
+  const streamView = (text: string) => {
+    if (!isEditAnswer(text)) return <div className="ai-result-text">{text}</div>;
+    const p = parseEdits(text);
+    return (
+      <div className="ai-edit">
+        <p className="ai-edit-title"><Icon name="sparkle" size={14} /> {p?.summary.split("\n")[0] || "Writing changes…"}</p>
+        <p className="w-small w-muted">Writing {p?.edits.length ? `change ${p.edits.length}` : "changes"}…</p>
+      </div>
+    );
+  };
   return (
     <div className="ai-panel">
       <div className="ai-head">
@@ -301,7 +361,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
         <input
           className="w-input"
           autoFocus={matchMedia("(pointer: fine)").matches}
-          placeholder={fromWorkspace || pinned ? "Ask about this PDF, or anything…" : "Ask AI anything…"}
+          placeholder={fromWorkspace || pinned ? "Ask about this PDF, or anything…" : noteSrc?.text.trim() && canInsert ? "Ask, or tell AI what to change…" : "Ask AI anything…"}
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           aria-label="Ask AI a question"
@@ -365,6 +425,15 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
         {pinned && <button className="ai-link" onClick={() => setPinned(null)}>{workspace ? "Choose again" : "Use the note instead"}</button>}
       </span>
 
+      {!fromWorkspace && !pinned && !!noteSrc?.text.trim() && suggestEdits && canInsert && (
+        <div className="ai-use ai-quick-edits" role="group" aria-label="Edit with AI">
+          <span className="w-small w-muted">Edit:</span>
+          {QUICK_EDITS.map((e) => (
+            <button key={e.label} className="w-chip" disabled={busy != null} title={e.q} onClick={() => void run("ask", undefined, e.q)}>{e.label}</button>
+          ))}
+        </div>
+      )}
+
       <div className="w-action-grid">
         {TOOLS.map((t) => (
           <button
@@ -417,7 +486,28 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
             {convo.turns.map((t, i) => (
               <div key={i} className="ai-turn">
                 {t.q && <p className="ai-asked w-small w-muted">{i ? "Then you asked" : "You asked"}: {t.q}</p>}
-                {i === convo.turns.length - 1 && cards.length ? (
+                {isEditAnswer(t.a) ? (() => {
+                  const p = parseEdits(t.a)!;
+                  const here = edited?.id === convo.id && edited.turn === i ? edited.r : undefined;
+                  return (
+                    <div className="ai-edit">
+                      <p className="ai-edit-title"><Icon name="sparkle" size={14} /> {p.summary.split("\n")[0] || "Suggested changes"}</p>
+                      {here === undefined ? (
+                        <p className="w-small w-muted">
+                          {p.edits.length} change{p.edits.length === 1 ? "" : "s"}.{" "}
+                          {canInsert && <button className="ai-link" onClick={() => showEdits(convo, i)}>Show in note</button>}
+                        </p>
+                      ) : here && here.shown ? (
+                        <p className="w-small w-muted">
+                          {here.shown} change{here.shown === 1 ? " is" : "s are"} shown in your note. Accept or reject {here.shown === 1 ? "it" : "them"} there.
+                          {here.missed > 0 && ` ${here.missed} didn't match the note and ${here.missed === 1 ? "was" : "were"} left out.`}
+                        </p>
+                      ) : (
+                        <p className="w-small ai-error-text">The changes didn't match your note. Try again, or select the part to change first.</p>
+                      )}
+                    </div>
+                  );
+                })() : i === convo.turns.length - 1 && cards.length ? (
                   <ul className="ai-cards" aria-label={`${cards.length} flashcards`}>
                     {cards.map((c, k) => <li key={k}><b>{c.question}</b><span>{c.answer}</span></li>)}
                   </ul>
@@ -427,10 +517,10 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
                 {t.stopped && <p className="w-small w-muted ai-stopped">Stopped before the end.</p>}
               </div>
             ))}
-            {busy && partial != null && <div className="ai-streaming"><div className="ai-result-text">{partial}</div></div>}
+            {busy && partial != null && <div className="ai-streaming">{streamView(partial)}</div>}
             {!busy && (
               <div className="w-row">
-                {canInsert && <button className="w-btn w-btn-primary w-btn-small" onClick={() => { insert(full); toast(cards.length ? `Added ${cards.length} flashcards to your note.` : "Added to your note."); setOpenId(null); }}>
+                {canInsert && !isEditAnswer(last.a) && <button className="w-btn w-btn-primary w-btn-small" onClick={() => { insert(full); toast(cards.length ? `Added ${cards.length} flashcards to your note.` : "Added to your note."); setOpenId(null); }}>
                   <Icon name="plus" size={14} /> {cards.length ? "Add cards to note" : "Insert into note"}
                 </button>}
                 {quiz.length > 0 && (
@@ -443,9 +533,9 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
                     <Icon name="play" size={14} /> Study now
                   </button>
                 )}
-                <button className="w-btn w-btn-small" onClick={() => void navigator.clipboard.writeText(full).then(() => toast("Copied."))}>
+                {!isEditAnswer(last.a) && <button className="w-btn w-btn-small" onClick={() => void navigator.clipboard.writeText(full).then(() => toast("Copied."))}>
                   <Icon name="copy" size={14} /> Copy
-                </button>
+                </button>}
                 <button className="w-btn w-btn-ghost w-btn-small" onClick={() => setOpenId(null)} title="It stays in Recent answers">Close</button>
               </div>
             )}
@@ -453,7 +543,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
               <form className="ai-ask ai-followup" onSubmit={(e) => { e.preventDefault(); void runFollowUp(convo); }}>
                 <input
                   className="w-input"
-                  placeholder={convo.tool === "flashcards" ? "e.g. make 5 harder ones" : convo.tool === "quiz" ? "e.g. why is question 2 right?" : "Ask a follow-up…"}
+                  placeholder={convo.tool === "flashcards" ? "e.g. make 5 harder ones" : convo.tool === "quiz" ? "e.g. why is question 2 right?" : convo.editable ? "Ask more, or ask for other changes…" : "Ask a follow-up…"}
                   value={followUp}
                   onChange={(e) => setFollowUp(e.target.value)}
                   aria-label="Ask a follow-up question"
@@ -465,7 +555,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
           </div>
         );
       })()}
-      {busy && !convo && partial != null && <div className="ai-result ai-streaming"><div className="ai-result-text">{partial}</div></div>}
+      {busy && !convo && partial != null && <div className="ai-result ai-streaming">{streamView(partial)}</div>}
       {busy && partial == null && (
         <div className="ai-loading" aria-live="polite">
           {progress ? <p className="w-small w-muted ai-progress">{progress}</p> : <><span /><span /><span /></>}

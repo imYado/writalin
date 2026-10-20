@@ -45,6 +45,8 @@ export interface AiRunOptions {
   extra?: string;
   /** Earlier answers in this conversation, each followed by the next question. */
   thread?: { answer: string; followUp: string }[];
+  /** On a question about the open note: the AI may answer with edits to it ("auto"), or must ("force"). */
+  edit?: "auto" | "force";
   /** Stops the answer part-way (the Stop button). */
   signal?: AbortSignal;
 }
