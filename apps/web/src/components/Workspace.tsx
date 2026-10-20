@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BLANK_DRAWING, HIGHLIGHT_COLORS, TEXT_COLORS, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
-import { WORKSPACE_PATH, REMINDERS_PATH, importZip, isScratch, isSystemNote, taskDate, type Vault, type VaultRecord } from "@writalin/vault";
+import { WORKSPACE_PATH, REMINDERS_PATH, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type QuizQuestion, type Vault, type VaultRecord } from "@writalin/vault";
 import { basename, extname, isMarkdown, noteName, type VaultPath } from "@writalin/shared";
 import {
   ActionGrid, applyTheme, BottomBar, CommandPalette, findTheme, FocusTimer, Icon, toast, useFocusTimer,
@@ -12,6 +12,7 @@ import { Home } from "./Home";
 import { NotePane, type NotePaneHandle } from "./NotePane";
 import { PointMenu, type MenuSection } from "./PointMenu";
 import { FlashcardStudy, type StudyCard } from "./FlashcardStudy";
+import { QuizPlay } from "./QuizPlay";
 import { StudySide, STUDY_TOUR, Tour, tourSeen } from "./StudySide";
 import { useNoteHost } from "./useNoteHost";
 import { SettingsModal } from "./Settings";
@@ -85,6 +86,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const [wsAi, setWsAi] = useState<WorkspaceAiSource | null>(null);
   const [aiFocus, setAiFocus] = useState<{ scope: string; nonce: number }>();
   const [study, setStudy] = useState<{ cards: StudyCard[]; title: string } | null>(null);
+  const [quiz, setQuiz] = useState<{ questions: QuizQuestion[]; title: string } | null>(null);
   const [touring, setTouring] = useState(false);
   const [themeEditor, setThemeEditor] = useState(false);
   const [customThemes, setCustomThemes] = useState<Theme[]>([]);
@@ -206,10 +208,12 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       const path = await vault.createNote(opts.title ?? "Untitled", { folder: opts.folder });
       openPath(path);
       // A new note opens with the study side beside it, so its tools are easy to find.
+      // On a phone there's no room beside it: the side pane stays one tap away instead.
+      const wide = window.innerWidth > 860;
       setLayout((l) => {
-        if (l.tabs.length) return { ...l, leftOpen: true };
+        if (l.tabs.length) return { ...l, leftOpen: wide || l.leftOpen };
         const id = `start::${Date.now()}`;
-        return { ...l, tabs: [{ id, kind: "start" }], active: id, leftOpen: true };
+        return { ...l, tabs: [{ id, kind: "start" }], active: id, leftOpen: wide };
       });
       if (!tourSeen() && window.innerWidth > 900) setTimeout(() => setTouring(true), 600);
     },
@@ -396,6 +400,20 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     if (layout.note) {
       const p = layout.note;
       const cards = vault.notes.get(p)?.flashcards ?? [];
+      list.push({
+        id: "play-quiz",
+        title: "Play the quiz in this note",
+        description: "Answer its questions one by one: multiple choice or written",
+        icon: "play",
+        group: "Study",
+        keywords: "quiz test multiple choice questions practice",
+        run: async () => {
+          const text = pane.current?.editor?.view?.state.doc.toString() ?? (await vault.read(p)).text;
+          const questions = parseQuiz(text);
+          if (questions.length) setQuiz({ questions, title: `Quiz: ${noteName(p)}` });
+          else toast("No quiz in this note yet. Ask the AI to make one with Quiz me.");
+        },
+      });
       if (cards.length) list.push({ id: "study-note", title: "Study flashcards in this note", description: `${cards.length} card${cards.length === 1 ? "" : "s"}`, icon: "play", group: "Study", keywords: "flashcards review", run: () => setStudy({ cards, title: noteName(p) }) });
       list.push(
         { id: "export-pdf", title: "Export note as PDF", description: "A4, ready to print or hand in", icon: "printer", group: "Import and export", run: () => void exportNote(vault, p, "pdf") },
@@ -492,6 +510,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           onOpenSettings={() => { setDockOpen(null); setSettingsOpen("ai"); }}
           autoRun={aiRun}
           onStudy={(cards) => setStudy({ cards, title: "Study the new cards" })}
+          onPlayQuiz={(questions) => setQuiz({ questions, title: "Quiz" })}
         />
       ),
     },
@@ -834,6 +853,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       </div>
 
       {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} />}
+      {quiz && <QuizPlay questions={quiz.questions} title={quiz.title} onClose={() => setQuiz(null)} />}
       {touring && <Tour steps={STUDY_TOUR} onClose={() => setTouring(false)} />}
       {menu && <PointMenu x={menu.x} y={menu.y} label={menu.kind === "note" ? "Note" : "Selected text"} sections={menu.kind === "note" ? noteMenu : selectionMenu} onClose={() => setMenu(null)} />}
       {paletteOpen && <CommandPalette open onClose={() => setPaletteOpen(false)} commands={commands} />}

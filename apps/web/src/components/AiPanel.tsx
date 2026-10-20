@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, toast, type IconName } from "@writalin/ui";
-import { cardsFromText, formatCards, type Vault } from "@writalin/vault";
+import { cardsFromText, formatCards, parseQuiz, type QuizQuestion, type Vault } from "@writalin/vault";
 import type { AiSourceText, WorkspaceAiSource } from "@writalin/workspaces";
 import { aiApi, ApiError, type Account, type AiState, type AiTool } from "../api";
 
@@ -10,7 +10,7 @@ const TOOLS: { id: AiTool; label: string; desc: string; icon: IconName }[] = [
   { id: "mainpoint", label: "Main point", desc: "One or two sentences", icon: "focus" },
   { id: "steps", label: "Break into steps", desc: "Small tasks as a checklist", icon: "checkSquare" },
   { id: "flashcards", label: "Flashcards", desc: "Question :: Answer cards", icon: "copy" },
-  { id: "quiz", label: "Quiz me", desc: "5 questions, answers hidden", icon: "sparkle" },
+  { id: "quiz", label: "Quiz me", desc: "Multiple choice or written", icon: "sparkle" },
   { id: "whereWasI", label: "Where was I?", desc: "Recap and next step", icon: "clock" },
 ];
 
@@ -33,13 +33,31 @@ interface Props {
   autoRun?: { tool: AiTool; nonce: number; source?: AiSource };
   /** Open the study view for these cards. */
   onStudy: (cards: { question: string; answer: string }[]) => void;
+  /** Play a quiz the AI just made. */
+  onPlayQuiz: (questions: QuizQuestion[]) => void;
 }
 
 /** The AI dock panel. Opt-in, signed-in only; the key is used on the server, never here. */
+const readPref = (k: string): string | null => {
+  try {
+    return localStorage.getItem(`writalin.ai.${k}`);
+  } catch {
+    return null;
+  }
+};
+const writePref = (k: string, v: string) => {
+  try {
+    if (v) localStorage.setItem(`writalin.ai.${k}`, v);
+    else localStorage.removeItem(`writalin.ai.${k}`);
+  } catch {
+    /* private mode: just not remembered */
+  }
+};
+
 /** The last `focusWorkspace` request applied, so reopening the panel later doesn't repeat it. */
 let appliedFocus = 0;
 
-export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, onOpenSettings, autoRun, onStudy }: Props) {
+export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, onOpenSettings, autoRun, onStudy, onPlayQuiz }: Props) {
   const [enabled, setEnabled] = useState(vault.settings.aiEnabled);
   const [state, setState] = useState<AiState | null>(null);
   const [busy, setBusy] = useState<AiTool | null>(null);
@@ -52,6 +70,15 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
   const [use, setUse] = useState<"note" | "workspace">(() => (workspace && !getSource("summarize")?.text.trim() ? "workspace" : "note"));
   const [scope, setScope] = useState(workspace?.defaultScope ?? "page");
   const [asked, setAsked] = useState("");
+  // Quiz style and the extra wishes are remembered on this device.
+  const [quizKind, setQuizKind] = useState<"choice" | "written">(() => (readPref("quizKind") === "written" ? "written" : "choice"));
+  const [quizCount, setQuizCount] = useState(() => Number(readPref("quizCount")) || 5);
+  const [quizSetup, setQuizSetup] = useState(false);
+  const [extra, setExtra] = useState(() => readPref("extra") ?? "");
+  const [extraOpen, setExtraOpen] = useState(() => !!readPref("extra"));
+  useEffect(() => writePref("quizKind", quizKind), [quizKind]);
+  useEffect(() => writePref("quizCount", String(quizCount)), [quizCount]);
+  useEffect(() => writePref("extra", extra), [extra]);
   useEffect(() => {
     if (!focusWorkspace || focusWorkspace.nonce === appliedFocus || !workspace) return;
     appliedFocus = focusWorkspace.nonce;
@@ -120,7 +147,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
     setBusy(tool);
     setResult(null);
     try {
-      const r = await aiApi.run(tool, text, tool === "ask" ? question : undefined);
+      const r = await aiApi.run(tool, text, tool === "ask" ? question : undefined, { quizKind, count: quizCount, extra: extra.trim() || undefined });
       setResult({ tool, text: r.text, footer: text ? src?.footer : undefined });
       if (tool === "ask") {
         setAsked(question);
@@ -163,6 +190,27 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
         <button className="w-btn w-btn-primary w-btn-small" disabled={!question.trim() || busy != null}>{busy === "ask" ? "…" : "Ask"}</button>
       </form>
 
+      {extraOpen ? (
+        <label className="ai-extra">
+          <span className="w-small w-muted">
+            Extra instructions for every answer
+            {extra && <button type="button" className="ai-link" onClick={() => { setExtra(""); setExtraOpen(false); }}>Clear</button>}
+          </span>
+          <textarea
+            className="w-input"
+            rows={2}
+            maxLength={1000}
+            placeholder="e.g. make it harder, focus on chapter 2, answer in French"
+            value={extra}
+            onChange={(e) => setExtra(e.target.value)}
+          />
+        </label>
+      ) : (
+        <button className="ai-link ai-extra-open" onClick={() => setExtraOpen(true)}>
+          <Icon name="plus" size={12} /> Add instructions for the AI
+        </button>
+      )}
+
       {workspace && !pinned && (
         <div className="ai-use" role="group" aria-label="What AI reads">
           <span className="w-small w-muted">Read:</span>
@@ -200,20 +248,48 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
 
       <div className="w-action-grid">
         {TOOLS.map((t) => (
-          <button key={t.id} className="w-action" disabled={busy != null} onClick={() => void run(t.id)}>
+          <button
+            key={t.id}
+            className="w-action"
+            disabled={busy != null}
+            aria-expanded={t.id === "quiz" ? quizSetup : undefined}
+            onClick={() => (t.id === "quiz" ? setQuizSetup((o) => !o) : void run(t.id))}
+          >
             <Icon name={t.icon} size={16} />
             <span className="w-action-text">
               <span className="w-action-label">{t.label}</span>
-              <span className="w-action-desc">{busy === t.id ? "Thinking…" : t.desc}</span>
+              <span className="w-action-desc">
+                {busy === t.id ? "Thinking…" : t.id === "quiz" ? `${quizCount} questions · ${quizKind === "choice" ? "multiple choice" : "written"}` : t.desc}
+              </span>
             </span>
           </button>
         ))}
       </div>
 
+      {quizSetup && (
+        <div className="ai-quiz-setup">
+          <div className="ai-use" role="group" aria-label="Kind of quiz">
+            <span className="w-small w-muted">Answer by:</span>
+            <button className="w-chip" aria-pressed={quizKind === "choice"} onClick={() => setQuizKind("choice")}>Multiple choice</button>
+            <button className="w-chip" aria-pressed={quizKind === "written"} onClick={() => setQuizKind("written")}>Writing</button>
+          </div>
+          <div className="ai-use" role="group" aria-label="Number of questions">
+            <span className="w-small w-muted">Questions:</span>
+            {[5, 10, 15].map((n) => (
+              <button key={n} className="w-chip" aria-pressed={quizCount === n} onClick={() => setQuizCount(n)}>{n}</button>
+            ))}
+          </div>
+          <button className="w-btn w-btn-primary w-btn-small" disabled={busy != null} onClick={() => { setQuizSetup(false); void run("quiz"); }}>
+            <Icon name="sparkle" size={14} /> Make the quiz
+          </button>
+        </div>
+      )}
+
       {busy && <div className="ai-loading" aria-live="polite"><span /><span /><span /></div>}
       {error && <p className="ai-error" role="alert">{error}</p>}
       {result && (() => {
         const cards = result.tool === "flashcards" ? cardsFromText(result.text) : [];
+        const quiz = result.tool === "quiz" ? parseQuiz(result.text) : [];
         const body = cards.length ? formatCards(cards, { divider: true }) : result.text;
         const markdown = result.tool === "flashcards" && cards.length ? `### Flashcards\n${body}` : body;
         const full = result.footer ? `${markdown}\n\n${result.footer}` : markdown;
@@ -231,6 +307,11 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
               {canInsert && <button className="w-btn w-btn-primary w-btn-small" onClick={() => { insert(full); toast(cards.length ? `Added ${cards.length} flashcards to your note.` : "Added to your note."); setResult(null); }}>
                 <Icon name="plus" size={14} /> {cards.length ? "Add cards to note" : "Insert into note"}
               </button>}
+              {quiz.length > 0 && (
+                <button className="w-btn w-btn-small" onClick={() => onPlayQuiz(quiz)}>
+                  <Icon name="play" size={14} /> Play quiz
+                </button>
+              )}
               {cards.length > 0 && (
                 <button className="w-btn w-btn-small" onClick={() => onStudy(cards)}>
                   <Icon name="play" size={14} /> Study now

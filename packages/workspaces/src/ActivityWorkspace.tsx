@@ -65,7 +65,7 @@ export function ContributionGraph({ summary, onPick }: { summary: ContributionSu
         </div>
       </div>
       <div className="contrib-foot">
-        <span className="contrib-hint" aria-live="polite">{hover ? cellLabel(hover) : "Point at a square to see that day."}</span>
+        <span className="contrib-hint" aria-live="polite">{hover ? cellLabel(hover) : matchMedia("(pointer: coarse)").matches ? "Tap a square to see that day." : "Point at a square to see that day."}</span>
         <span className="contrib-legend" aria-hidden="true">
           Less
           {[0, 1, 2, 3, 4].map((l) => <i key={l} className={`contrib-cell l${l}`} />)}

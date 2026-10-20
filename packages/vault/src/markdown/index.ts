@@ -7,3 +7,4 @@ export * from "./tasks";
 export * from "./flashcards";
 export * from "./blocks";
 export * from "./parse";
+export * from "./quiz";

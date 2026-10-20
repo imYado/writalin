@@ -29,8 +29,11 @@ export function BottomBar({ items, compact = false, openId: controlled, onOpenCh
   const ref = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!openId) return;
-    const onDown = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpenId(null);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpenId(null);
+    // A window opened from the panel (a quiz, a study session) sits on top of
+    // it; using or closing that window shouldn't close the panel underneath.
+    const inModal = (t: EventTarget | null) => t instanceof Element && !!t.closest(".w-overlay");
+    const onDown = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && !inModal(e.target) && setOpenId(null);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !document.querySelector(".w-overlay") && setOpenId(null);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
