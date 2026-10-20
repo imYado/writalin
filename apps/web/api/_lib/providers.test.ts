@@ -42,4 +42,16 @@ describe("AI providers", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 403 })));
     await expect(listModels(target)).rejects.toThrow(/didn't accept that key/);
   });
+
+  it("streams an answer piece by piece", async () => {
+    const sse = 'data: {"model":"m1-x","choices":[{"delta":{"content":"Hel"}}]}\n\ndata: {"choices":[{"delta":{"content":"lo"}}]}\n\ndata: [DONE]\n\n';
+    const bytes = new TextEncoder().encode(sse);
+    // Split mid-line to check pieces are joined across reads.
+    const body = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(bytes.slice(0, 30)); c.enqueue(bytes.slice(30)); c.close(); } });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 200 })));
+    const pieces: string[] = [];
+    const out = await chat(target, "sys", "hi", "own", (p) => pieces.push(p));
+    expect(pieces).toEqual(["Hel", "lo"]);
+    expect(out).toEqual({ text: "Hello", model: "m1-x" });
+  });
 });

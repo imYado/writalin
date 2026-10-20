@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { VaultRecord, Vault } from "@writalin/vault";
-import { isSystemNote, tagMatches, taskDate, TASKS_PATH } from "@writalin/vault";
-import { isoDate, noteName, dirname, type VaultPath } from "@writalin/shared";
+import { isSystemNote, studyStats, tagMatches, taskDate, TASKS_PATH } from "@writalin/vault";
+import { basename, isHiddenPath, isMarkdown, isoDate, noteName, dirname, type VaultPath } from "@writalin/shared";
 import { Icon, toast } from "@writalin/ui";
 import { ContributionGraph, useContributions } from "@writalin/workspaces";
 
@@ -15,6 +15,8 @@ interface Props {
   onNewNote: (folder?: string) => void;
   onDelete: (path: VaultPath) => void;
   onZone: (zone: "calendar" | "activity") => void;
+  /** Start reviewing the flashcards due today. */
+  onStudyDue: () => void;
   initialTag?: string;
 }
 
@@ -24,7 +26,7 @@ function greeting(): string {
 }
 
 /** Vault switcher, folders, recent notes, tags, search and today's tasks. */
-export function Home({ vault, version, records, currentId, onSwitchVault, onOpen, onNewNote, onDelete, onZone, initialTag }: Props) {
+export function Home({ vault, version, records, currentId, onSwitchVault, onOpen, onNewNote, onDelete, onZone, onStudyDue, initialTag }: Props) {
   const activity = useContributions(vault, version, 52, "both");
   const todayWords = vault.activity.days[isoDate()]?.words ?? 0;
   const [q, setQ] = useState("");
@@ -41,6 +43,17 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
     if (folder != null) list = list.filter((n) => dirname(n.path) === folder);
     return list.filter((n) => !isSystemNote(n.path)).sort((a, b) => b.mtime - a.mtime).slice(0, tag || folder != null ? 200 : 12);
   }, [vault, version, tag, folder]);
+  const study = useMemo(() => {
+    const all = [...vault.notes.values()].flatMap((n) => n.flashcards);
+    const due = vault.dueCards(today);
+    return { total: all.length, due: due.length, fresh: due.filter((c) => !c.schedule).length, ...studyStats(vault.activity) };
+  }, [vault, version, today]);
+  const [allFiles, setAllFiles] = useState(false);
+  /** Imported files (PDFs, images, anything that isn't a note), newest first. */
+  const files = useMemo(
+    () => [...vault.files.values()].filter((f) => !isMarkdown(f.path) && !isHiddenPath(f.path) && !f.path.startsWith(".writalin/")).sort((a, b) => b.mtime - a.mtime),
+    [vault, version],
+  );
   const dueToday = useMemo(
     () => vault.allTasks().filter((t) => t.status === "todo" && t.path !== TASKS_PATH && taskDate(t) != null && taskDate(t)! <= today).sort((a, b) => (taskDate(a)! + (a.time ?? "")).localeCompare(taskDate(b)! + (b.time ?? ""))),
     [vault, version, today],
@@ -137,6 +150,29 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
               </ul>
             </section>
             <aside className="home-side">
+              {(study.total > 0 || study.quizzesWeek > 0) && (
+                <section className="home-section home-study">
+                  <h2>Study</h2>
+                  <div className="home-study-due">
+                    <div>
+                      <strong>{study.due ? `${study.due} card${study.due === 1 ? "" : "s"} to review` : "All caught up"}</strong>
+                      <span className="w-muted w-small">
+                        {study.due ? (study.fresh ? `${study.fresh} new` : "Due today") : `${study.total} card${study.total === 1 ? "" : "s"} scheduled for later`}
+                      </span>
+                    </div>
+                    {study.due > 0 && (
+                      <button className="w-btn w-btn-primary w-btn-small" onClick={onStudyDue}>
+                        <Icon name="play" size={14} /> Review
+                      </button>
+                    )}
+                  </div>
+                  <ul className="home-study-stats">
+                    <li><strong>{study.streak}</strong><span>day streak</span></li>
+                    <li><strong>{study.cardsWeek}</strong><span>cards this week</span></li>
+                    <li><strong>{study.quizPercentWeek == null ? "–" : `${study.quizPercentWeek}%`}</strong><span>{study.quizzesWeek ? `right in ${study.quizzesWeek} quiz${study.quizzesWeek === 1 ? "" : "zes"}` : "no quizzes this week"}</span></li>
+                  </ul>
+                </section>
+              )}
               <section className="home-section">
                 <h2 className="home-h2-row">Today <button className="w-btn w-btn-small w-btn-ghost" onClick={() => onZone("calendar")}>Calendar <Icon name="chevronRight" size={14} /></button></h2>
                 {dueToday.length === 0 ? (
@@ -160,6 +196,27 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
                   </ul>
                 )}
               </section>
+              {files.length > 0 && (
+                <section className="home-section">
+                  <h2>Files</h2>
+                  <ul className="note-list file-list">
+                    {(allFiles ? files : files.slice(0, 6)).map((f) => (
+                      <li key={f.path} className="note-list-row">
+                        <button className="w-glow" onClick={() => onOpen(f.path)} title={f.path}>
+                          <span className="note-list-name">
+                            <Icon name={/\.pdf$/i.test(f.path) ? "pdf" : /\.(png|jpe?g|gif|webp|svg|avif|bmp)$/i.test(f.path) ? "image" : "file"} size={14} /> {basename(f.path)}
+                          </span>
+                          <span className="note-list-meta">{dirname(f.path) || "—"} · {(f.size / 1024 / 1024).toFixed(f.size > 1024 * 1024 ? 1 : 2)} MB</span>
+                        </button>
+                        <button className="note-list-del" onClick={() => onDelete(f.path)} aria-label={`Delete ${basename(f.path)}`} title="Delete file">
+                          <Icon name="trash" size={14} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {files.length > 6 && <button className="w-link" onClick={() => setAllFiles((a) => !a)}>{allFiles ? "Show fewer" : `Show all ${files.length}`}</button>}
+                </section>
+              )}
               {folders.length > 0 && (
                 <section className="home-section">
                   <h2>Folders</h2>

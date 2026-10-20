@@ -10,6 +10,9 @@ import {
   formatTaskLine,
   parseFlashcards,
   parseQuiz,
+  nextSchedule,
+  setCardSchedule,
+  isDue,
   cardsFromText,
   formatCards,
   parseNote,
@@ -214,5 +217,43 @@ describe("parseQuiz", () => {
   it("accepts bold letters and a dash after the letter", () => {
     const md = "1. Q?\n   A) one\n   B) two\n\n> [!success]- Answers\n> 1. **A** – because";
     expect(parseQuiz(md)[0]).toMatchObject({ options: ["one", "two"], correct: 0, answer: "because" });
+  });
+});
+
+describe("flashcard scheduling", () => {
+  const day = new Date(2026, 9, 20);
+  it("reads the plugin's review notes", () => {
+    const [a, b] = parseFlashcards("Sun ::: Star <!--SR:!2026-10-22,3,250!2026-10-30,10,270-->", "f.md");
+    expect(a!.schedule).toEqual({ due: "2026-10-22", interval: 3, ease: 250 });
+    expect(b!.schedule).toEqual({ due: "2026-10-30", interval: 10, ease: 270 });
+    expect(isDue(a!, "2026-10-21")).toBe(false);
+    expect(isDue(parseFlashcards("x :: y", "f.md")[0]!)).toBe(true);
+  });
+  it("stretches the gap when known and shrinks it when missed", () => {
+    expect(nextSchedule(undefined, true, day)).toEqual({ due: "2026-10-23", interval: 3, ease: 250 });
+    expect(nextSchedule({ due: "2026-10-20", interval: 4, ease: 250 }, true, day).interval).toBe(10);
+    expect(nextSchedule({ due: "2026-10-20", interval: 10, ease: 140 }, false, day)).toEqual({ due: "2026-10-21", interval: 1, ease: 130 });
+  });
+  it("writes the note at the end of a one-line card, keeping the other side", () => {
+    const text = "# T\nA :: B\nSun ::: Star <!--SR:!2026-10-22,3,250!2026-10-30,10,270-->";
+    const [, , rev] = parseFlashcards(text, "f.md");
+    const s = { due: "2026-11-01", interval: 12, ease: 270 };
+    expect(setCardSchedule(text, rev!, s)).toBe("# T\nA :: B\nSun ::: Star <!--SR:!2026-10-22,3,250!2026-11-01,12,270-->");
+    const [first] = parseFlashcards(text, "f.md");
+    expect(setCardSchedule(text, first!, s)!.split("\n")[1]).toBe("A :: B <!--SR:!2026-11-01,12,270-->");
+  });
+  it("puts a multi-line card's note on the line after its answer, then replaces it", () => {
+    const text = "What does it do?\n?\nMakes energy\n\nnext";
+    const [card] = parseFlashcards(text, "f.md");
+    const once = setCardSchedule(text, card!, { due: "2026-10-23", interval: 3, ease: 250 })!;
+    expect(once).toBe("What does it do?\n?\nMakes energy\n<!--SR:!2026-10-23,3,250-->\n\nnext");
+    const [again] = parseFlashcards(once, "f.md");
+    expect(again).toMatchObject({ answer: "Makes energy", schedule: { interval: 3 } });
+    expect(setCardSchedule(once, again!, { due: "2026-11-01", interval: 8, ease: 250 })).toBe("What does it do?\n?\nMakes energy\n<!--SR:!2026-11-01,8,250-->\n\nnext");
+  });
+  it("finds a card that moved", () => {
+    const [card] = parseFlashcards("A :: B", "f.md");
+    expect(setCardSchedule("new line\nA :: B", card!, { due: "2026-10-23", interval: 3, ease: 250 })).toBe("new line\nA :: B <!--SR:!2026-10-23,3,250-->");
+    expect(setCardSchedule("gone", card!, { due: "2026-10-23", interval: 3, ease: 250 })).toBeNull();
   });
 });

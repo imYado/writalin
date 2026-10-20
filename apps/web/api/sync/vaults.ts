@@ -3,13 +3,16 @@ import { handler, json, readJson, HttpError } from "../_lib/http.js";
 import { requireUser } from "../_lib/auth.js";
 import { requireVault } from "../_lib/vaults.js";
 
-/** How many synced vaults the list shows; older empty ones are cleaned up. */
+/** How many synced vaults are kept; older copies are cleaned up. */
 const KEEP = 3;
+const HOUR = 3_600_000;
 
 /**
- * The signed-in user's synced vaults, most recently synced first. Old copies
- * with no notes in them (left by "Sync this vault" pressed again) are deleted
- * once they're past the newest few and more than an hour old.
+ * The signed-in user's synced vaults, most recently synced first. Once nothing
+ * has synced to them for an hour, older copies that share a name with a newer
+ * one are deleted, and so are empty copies past the newest few. A computer
+ * still linked to a deleted copy joins the newest one of that name on its next
+ * sync, so its notes merge in.
  */
 export const GET = handler(async (req) => {
   const user = await requireUser(req);
@@ -18,7 +21,15 @@ export const GET = handler(async (req) => {
       greatest(v.created_at, (select max(f.updated_at) from sync_files f where f.vault_id = v.id)) as last_sync
     from sync_vaults v where v.user_id = ${user.id} order by last_sync desc`;
   let rows = await list();
-  const stale = rows.slice(KEEP).filter((r) => r.files === 0 && Date.now() - new Date(r.created_at as string).getTime() > 3_600_000).map((r) => r.id as string);
+  const seen = new Set<string>();
+  const stale = rows
+    .filter((r, i) => {
+      const dup = seen.has(r.name as string);
+      seen.add(r.name as string);
+      const idle = Date.now() - new Date(r.last_sync as string).getTime() > HOUR;
+      return idle && (dup || (i >= KEEP && r.files === 0));
+    })
+    .map((r) => r.id as string);
   if (stale.length) {
     await db()`delete from sync_vaults where user_id = ${user.id} and id = any(${stale}::uuid[])`;
     rows = await list();

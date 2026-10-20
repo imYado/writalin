@@ -184,7 +184,14 @@ export async function verifyKey(provider: ProviderId, apiKey: string, model: str
   return model;
 }
 
-export async function runTool(target: AiTarget, tool: AiTool, text: string, question?: string, opts: ToolOptions = {}): Promise<{ text: string; model: string }> {
+export async function runTool(
+  target: AiTarget,
+  tool: AiTool,
+  text: string,
+  question?: string,
+  opts: ToolOptions = {},
+  onDelta?: (text: string) => void,
+): Promise<{ text: string; model: string }> {
   const instruction = tool === "quiz" ? quizInstruction(opts.quizKind ?? "choice", opts.count ?? 5) : AI_TOOLS[tool];
   const user = [
     instruction,
@@ -192,18 +199,18 @@ export async function runTool(target: AiTarget, tool: AiTool, text: string, ques
     question ? `\nQuestion: ${question}` : "",
     text ? `\n<note>\n${text}\n</note>` : "",
   ].join("");
-  const out = await callModel(target, user);
+  const out = await callModel(target, user, onDelta);
   return { ...out, text: tidyAiMarkdown(out.text) };
 }
 
-async function callModel(target: AiTarget, user: string): Promise<{ text: string; model: string }> {
+async function callModel(target: AiTarget, user: string, onDelta?: (text: string) => void): Promise<{ text: string; model: string }> {
   const { apiKey, mode } = target;
   if (target.provider !== "anthropic") {
-    return chat({ baseUrl: target.baseUrl, apiKey, model: target.model, label: PROVIDERS[target.provider].label }, SYSTEM, user, mode);
+    return chat({ baseUrl: target.baseUrl, apiKey, model: target.model, label: PROVIDERS[target.provider].label }, SYSTEM, user, mode, onDelta);
   }
   const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 120_000 });
   try {
-    const res = await client.beta.messages.create({
+    const stream = client.beta.messages.stream({
       model: target.model,
       max_tokens: 8000,
       // Study help is short; low effort keeps answers quick. Thinking stays adaptive.
@@ -214,6 +221,8 @@ async function callModel(target: AiTarget, user: string): Promise<{ text: string
       system: SYSTEM,
       messages: [{ role: "user", content: user }],
     });
+    if (onDelta) stream.on("text", (piece) => onDelta(piece));
+    const res = await stream.finalMessage();
     if (res.stop_reason === "refusal") {
       throw new HttpError(422, "The AI couldn't help with this text. Try a different part of your note.", "ai_refused");
     }

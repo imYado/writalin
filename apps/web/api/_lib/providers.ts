@@ -78,14 +78,14 @@ export async function listModels(t: Omit<ChatTarget, "model">): Promise<string[]
   return ids?.length ? ids : null;
 }
 
-/** One OpenAI-style chat completion. */
-export async function chat(t: ChatTarget, system: string, user: string, mode: "own" | "builtin"): Promise<{ text: string; model: string }> {
+/** One OpenAI-style chat completion. With `onDelta`, the answer streams in and each piece is passed on as it comes. */
+export async function chat(t: ChatTarget, system: string, user: string, mode: "own" | "builtin", onDelta?: (text: string) => void): Promise<{ text: string; model: string }> {
   let res: Response;
   try {
     res = await fetch(`${t.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${t.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: t.model, max_tokens: 4000, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+      body: JSON.stringify({ model: t.model, max_tokens: 4000, stream: !!onDelta, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
       signal: AbortSignal.timeout(110_000),
       redirect: "error",
     });
@@ -101,8 +101,42 @@ export async function chat(t: ChatTarget, system: string, user: string, mode: "o
     console.error(`${t.label} error`, res.status, (await res.text().catch(() => "")).slice(0, 500));
     throw new HttpError(502, `${t.label} is having trouble right now. Try again in a moment.`);
   }
+  if (onDelta && res.body) return readChatStream(res.body, t, onDelta);
   const body = (await res.json().catch(() => null)) as { model?: string; choices?: { message?: { content?: string | null } }[] } | null;
   const out = body?.choices?.[0]?.message?.content?.trim();
   if (!out) throw new HttpError(502, "The AI returned an empty answer. Try again.");
   return { text: out, model: body?.model ?? t.model };
+}
+
+/** Server-sent events from a streaming chat completion: `data: {…}` lines, then `data: [DONE]`. */
+async function readChatStream(stream: ReadableStream<Uint8Array>, t: ChatTarget, onDelta: (text: string) => void): Promise<{ text: string; model: string }> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let text = "";
+  let model = t.model;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      const data = /^data:\s*(.*)$/.exec(line.trim())?.[1];
+      if (!data || data === "[DONE]") continue;
+      try {
+        const ev = JSON.parse(data) as { model?: string; choices?: { delta?: { content?: string | null } }[] };
+        if (ev.model) model = ev.model;
+        const piece = ev.choices?.[0]?.delta?.content;
+        if (piece) {
+          text += piece;
+          onDelta(piece);
+        }
+      } catch {
+        /* a keep-alive or a line we don't understand */
+      }
+    }
+  }
+  if (!text.trim()) throw new HttpError(502, "The AI returned an empty answer. Try again.");
+  return { text: text.trim(), model };
 }

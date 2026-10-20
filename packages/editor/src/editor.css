@@ -166,6 +166,7 @@
 .w-editor .cm-card-mq { font-weight: 600; }
 .w-editor .cm-card-msep .cm-card-toggle { padding: 2px 0 4px; }
 .w-editor .cm-card-msep .cm-widgetBuffer { display: none; }
+.w-editor .cm-line.cm-card-srline { height: 0; min-height: 0; padding: 0 !important; overflow: hidden; }
 .w-editor .cm-card-ma { padding-left: 8px !important; }
 .w-editor .cm-card-ma + .cm-card-ma { border-top-left-radius: 0; }
 .w-editor .cm-card-msep-raw { color: var(--w-accent); font-weight: 600; }

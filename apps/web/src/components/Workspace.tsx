@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BLANK_DRAWING, HIGHLIGHT_COLORS, TEXT_COLORS, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
-import { WORKSPACE_PATH, REMINDERS_PATH, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type QuizQuestion, type Vault, type VaultRecord } from "@writalin/vault";
-import { basename, extname, isMarkdown, noteName, type VaultPath } from "@writalin/shared";
+import { WORKSPACE_PATH, REMINDERS_PATH, formatCards, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type QuizQuestion, type Vault, type VaultRecord } from "@writalin/vault";
+import { basename, extname, isMarkdown, noteName, type Flashcard, type VaultPath } from "@writalin/shared";
 import {
   ActionGrid, applyTheme, BottomBar, CommandPalette, findTheme, FocusTimer, Icon, toast, useFocusTimer,
   type BarItem, type Command, type GridAction, type IconName, type Theme,
@@ -13,7 +13,6 @@ import { NotePane, type NotePaneHandle } from "./NotePane";
 import { PointMenu, type MenuSection } from "./PointMenu";
 import { FlashcardStudy, type StudyCard } from "./FlashcardStudy";
 import { QuizPlay } from "./QuizPlay";
-import { StudySide, STUDY_TOUR, Tour, tourSeen } from "./StudySide";
 import { useNoteHost } from "./useNoteHost";
 import { SettingsModal } from "./Settings";
 import { ThemeEditor, loadCustomThemes } from "./ThemeEditor";
@@ -24,7 +23,7 @@ import { getSyncLink, runSync } from "../state/sync";
 
 const PdfWorkspace = lazy(() => import("@writalin/workspaces/pdf").then((m) => ({ default: m.PdfWorkspace })));
 
-type TabKind = "start" | "tasks" | "calendar" | "scratch" | "pdf" | "image" | "note";
+type TabKind = "tasks" | "calendar" | "scratch" | "pdf" | "image" | "note";
 interface Tab {
   id: string;
   kind: TabKind;
@@ -51,7 +50,6 @@ interface Layout {
 }
 
 const TAB_META: Record<TabKind, { label: string; icon: IconName }> = {
-  start: { label: "Study side", icon: "sparkle" },
   tasks: { label: "Tasks", icon: "checkSquare" },
   calendar: { label: "Calendar", icon: "calendar" },
   scratch: { label: "Scratch pad", icon: "scratch" },
@@ -85,9 +83,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   /** What the open side-pane workspace (a PDF) offers the AI dock. */
   const [wsAi, setWsAi] = useState<WorkspaceAiSource | null>(null);
   const [aiFocus, setAiFocus] = useState<{ scope: string; nonce: number }>();
-  const [study, setStudy] = useState<{ cards: StudyCard[]; title: string } | null>(null);
+  const [study, setStudy] = useState<{ cards: (StudyCard | Flashcard)[]; title: string } | null>(null);
   const [quiz, setQuiz] = useState<{ questions: QuizQuestion[]; title: string } | null>(null);
-  const [touring, setTouring] = useState(false);
   const [themeEditor, setThemeEditor] = useState(false);
   const [customThemes, setCustomThemes] = useState<Theme[]>([]);
   const [jump, setJump] = useState<{ heading?: string; line?: number; nonce: number } | undefined>();
@@ -207,15 +204,6 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     async (opts: { title?: string; folder?: string } = {}) => {
       const path = await vault.createNote(opts.title ?? "Untitled", { folder: opts.folder });
       openPath(path);
-      // A new note opens with the study side beside it, so its tools are easy to find.
-      // On a phone there's no room beside it: the side pane stays one tap away instead.
-      const wide = window.innerWidth > 860;
-      setLayout((l) => {
-        if (l.tabs.length) return { ...l, leftOpen: wide || l.leftOpen };
-        const id = `start::${Date.now()}`;
-        return { ...l, tabs: [{ id, kind: "start" }], active: id, leftOpen: wide };
-      });
-      if (!tourSeen() && window.innerWidth > 900) setTimeout(() => setTouring(true), 600);
     },
     [vault, openPath],
   );
@@ -256,6 +244,35 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     toast(`Added to “${noteName(layout.note ?? "")}”.`);
   }, [layout.note]);
 
+  const studyDue = useCallback(() => {
+    const cards = vault.dueCards();
+    if (cards.length) setStudy({ cards, title: "Due today" });
+    else toast("Nothing due. Every card is scheduled for later.");
+  }, [vault]);
+
+  /** Save a review's next due date beside the card. Cards made by AI and not added to a note only count. */
+  const reviewCard = useCallback(
+    async (c: StudyCard | Flashcard, gotIt: boolean) => {
+      if (!("path" in c)) return vault.recordStudy({ cards: 1 });
+      // Save any typing first, so writing the date doesn't clash with it.
+      if (c.path === layout.note) await pane.current?.flush();
+      await vault.reviewCard(c, gotIt).catch(() => toast("Couldn't save when this card is due next.", { tone: "warn" }));
+    },
+    [vault, layout.note],
+  );
+
+  const addCardsToNote = useCallback(
+    (cards: StudyCard[]) => {
+      if (!pane.current?.editor?.view) {
+        toast("Open a note to add the cards to.", { tone: "warn" });
+        return false;
+      }
+      appendToNote(`\n### Flashcards from the quiz\n\n${formatCards(cards, { divider: true })}\n`);
+      return true;
+    },
+    [appendToNote],
+  );
+
   const openScratch = useCallback(async (which: "new" | "latest" = "new") => {
     const latest = which === "latest" ? vault.scratches()[0]?.path : undefined;
     const path = latest ?? (await vault.createScratch());
@@ -266,8 +283,19 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
 
   const deleteNote = useCallback(async (path: VaultPath) => {
     await pane.current?.flush();
-    setLayout((l) => ({ ...l, note: l.note === path ? null : l.note, view: l.note === path ? "home" : l.view, tabs: l.tabs.filter((t) => t.path !== path) }));
-    await removeWithUndo(vault, path, `“${noteName(path)}”`, () => vault.delete(path));
+    setLayout((l) => {
+      const tabs = l.tabs.filter((t) => t.path !== path);
+      return { ...l, note: l.note === path ? null : l.note, view: l.note === path ? "home" : l.view, tabs, active: tabs.some((x) => x.id === l.active) ? l.active : tabs[tabs.length - 1]?.id ?? null };
+    });
+    if (isMarkdown(path)) return removeWithUndo(vault, path, `“${noteName(path)}”`, () => vault.delete(path));
+    // An imported file (PDF, image…): keep its bytes and highlights so Undo can put it back.
+    const [blob, highlights] = await Promise.all([vault.store.readBinary(path).catch(() => null), vault.pdfHighlights(path).catch(() => [])]);
+    try {
+      await vault.delete(path);
+    } catch (e) {
+      return toast((e as Error).message, { tone: "warn" });
+    }
+    toast(`“${basename(path)}” deleted.`, blob ? { action: { label: "Undo", run: () => void vault.writeBinary(path, blob).then((p) => { if (highlights.length) void vault.setPdfHighlights(p, highlights); }) } } : undefined);
   }, [vault]);
 
   const hostAction = useRef<(a: HostAction) => void>(() => {});
@@ -375,9 +403,6 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       { id: "ws-scratch", title: "New scratch pad", description: "Park a stray thought beside your note", icon: "scratch", group: "Side pane", keywords: "inbox quick", run: () => void openScratch("new") },
       { id: "ws-scratch-last", title: "Open last scratch pad", description: "Pick up the last brain dump", icon: "scratch", group: "Side pane", shortcut: "Ctrl+/", keywords: "inbox quick", run: () => void openScratch("latest") },
       { id: "ws-task-add", title: "Add a task", description: "To this note", icon: "checkSquare", group: "Side pane", keywords: "todo new", run: () => openTab({ kind: "tasks", focus: Date.now() }) },
-      { id: "ws-start", title: "Study side", description: "PDFs, AI, tasks and more beside your note", icon: "sparkle", group: "Side pane", keywords: "help tools", run: () => openTab({ kind: "start" }) },
-      // The tour points at buttons and shortcuts; on a phone there's nothing to show.
-      ...(matchMedia("(pointer: coarse)").matches ? [] : [{ id: "tour", title: "Take the tour", description: "A quick look at the study side, PDFs and AI", icon: "bulb", group: "Help", keywords: "help tutorial guide", run: () => { goZone("note"); openTab({ kind: "start" }); setTimeout(() => setTouring(true), 400); } } satisfies Command]),
       { id: "ws-tasks", title: "Tasks beside this note", description: "This note's checklist in the side pane", icon: "split", group: "Side pane", run: () => openTab({ kind: "tasks" }) },
       { id: "ws-cal", title: "Calendar beside this note", description: "Open Calendar in the side pane", icon: "split", group: "Side pane", run: () => openTab({ kind: "calendar" }) },
       { id: "close-left", title: "Close side pane", description: "Back to just the note", icon: "close", group: "Side pane", run: () => setLayout((l) => ({ ...l, leftOpen: false })) },
@@ -385,6 +410,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       { id: "timer-start", title: "Start focus timer", description: `${settings.timerMinutes} minutes, then a ${settings.breakMinutes}-minute break`, icon: "play", group: "Focus", keywords: "pomodoro", run: () => timer.dispatch({ type: "start" }) },
       { id: "timer-pause", title: "Pause focus timer", description: "Pick it up again whenever", icon: "pause", group: "Focus", run: () => timer.dispatch({ type: "pause" }) },
       { id: "timer-reset", title: "Stop focus timer", description: "Reset to the start", icon: "reset", group: "Focus", run: () => timer.dispatch({ type: "reset" }) },
+      { id: "study-due", title: "Review due flashcards", description: (() => { const n = vault.dueCards().length; return n ? `${n} card${n === 1 ? "" : "s"} due today` : "Nothing due right now"; })(), icon: "play", group: "Study", keywords: "flashcards review spaced repetition due today", run: studyDue },
       { id: "study-all", title: "Study all flashcards", description: "Every Question :: Answer card in the vault", icon: "play", group: "Study", keywords: "flashcards review quiz cards", run: () => { const cards = [...vault.notes.values()].flatMap((n) => n.flashcards); if (cards.length) setStudy({ cards, title: "All flashcards" }); else toast("No flashcards yet. Write Question :: Answer on a line, or ask the AI to make some."); } },
       { id: "ai", title: "AI study helper", description: "Explain, summarize, flashcards, quiz, next steps", icon: "sparkle", group: "AI", keywords: "explain summarize flashcards quiz steps where was i", run: () => { goZone("note"); setTimeout(() => setDockOpen("ai"), 60); } },
       { id: "print", title: printLayout ? "Hide page breaks" : "Show page breaks", description: "See where A4 pages end when printed", icon: "printer", group: "View", keywords: "print layout", run: () => setPrintLayout((p) => !p) },
@@ -636,21 +662,6 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
 
   const renderTab = (t: Tab) => {
     switch (t.kind) {
-      case "start":
-        return (
-          <StudySide
-            vault={vault}
-            version={version}
-            onUploadPdf={() => pdfInput.current?.click()}
-            onOpenPdf={(path) => openTab({ kind: "pdf", path })}
-            onAi={() => setDockOpen("ai")}
-            onTasks={() => openTab({ kind: "tasks", focus: Date.now() })}
-            onScratch={() => void openScratch("new")}
-            onCalendar={() => openTab({ kind: "calendar" })}
-            onImport={() => fileInput.current?.click()}
-            onTour={() => setTouring(true)}
-          />
-        );
       case "tasks": return <TasksWorkspace {...wsProps} focusAdd={t.focus} />;
       case "calendar": return <CalendarWorkspace {...wsProps} />;
       case "scratch": return t.path ? <ScratchpadWorkspace {...wsProps} host={host} path={t.path} onDeleted={() => closeTab(t.id)} /> : null;
@@ -672,6 +683,21 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     });
 
   const showLeft = layout.leftOpen && layout.tabs.length > 0 && layout.view === "note";
+  const adder = {
+    vault,
+    onTasks: (focus: boolean) => openTab({ kind: "tasks", focus: focus ? Date.now() : undefined }),
+    onCalendar: () => openTab({ kind: "calendar" }),
+    onPdf: (path?: VaultPath) => (path ? openTab({ kind: "pdf", path }) : pdfInput.current?.click()),
+    onScratch: (path?: VaultPath) => (path ? openTab({ kind: "scratch", path }) : void openScratch("new")),
+    onDeleteScratch: (path: VaultPath) => {
+      setLayout((l) => {
+        const tabs = l.tabs.filter((x) => x.path !== path);
+        return { ...l, tabs, active: tabs.some((x) => x.id === l.active) ? l.active : tabs[tabs.length - 1]?.id ?? null };
+      });
+      void removeWithUndo(vault, path, "Scratch pad", () => vault.delete(path));
+    },
+    onDeleteFile: (path: VaultPath) => void deleteNote(path),
+  };
   const zone = layout.view === "note" && !layout.note ? "home" : layout.view;
 
   return (
@@ -746,9 +772,13 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             )}
             {zone === "note" && (
               <>
-                <button className="w-icon-btn topbar-desk" aria-pressed={showLeft} onClick={() => (layout.tabs.length ? setLayout((l) => ({ ...l, leftOpen: !l.leftOpen })) : openTab({ kind: "start" }))} aria-label="Side pane" title="Study side: PDFs, AI, tasks">
-                  <Icon name="split" />
-                </button>
+                {layout.tabs.length ? (
+                  <button className="w-icon-btn" aria-pressed={showLeft} onClick={() => setLayout((l) => ({ ...l, leftOpen: !l.leftOpen }))} aria-label="Side pane" title="Side pane: PDFs, tasks, calendar">
+                    <Icon name="split" />
+                  </button>
+                ) : (
+                  <TabAdder {...adder} trigger="split" />
+                )}
                 <button className="w-icon-btn topbar-desk" aria-pressed={outlineOpen} onClick={() => setOutlineOpen((o) => !o)} aria-label="Outline" title="Outline (Ctrl+Shift+O)">
                   <Icon name="list" />
                 </button>
@@ -777,6 +807,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
               onNewNote={(folder) => void newNote({ folder })}
               onDelete={(p) => void deleteNote(p)}
               onZone={goZone}
+              onStudyDue={studyDue}
               initialTag={homeTag}
               key={homeTag ?? ""}
             />
@@ -805,21 +836,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
                       </div>
                     ))}
                   </div>
-                  <TabAdder
-                    vault={vault}
-                    onTasks={(focus) => openTab({ kind: "tasks", focus: focus ? Date.now() : undefined })}
-                    onCalendar={() => openTab({ kind: "calendar" })}
-                    onStart={() => openTab({ kind: "start" })}
-                    onPdf={(path) => (path ? openTab({ kind: "pdf", path }) : pdfInput.current?.click())}
-                    onScratch={(path) => (path ? openTab({ kind: "scratch", path }) : void openScratch("new"))}
-                    onDeleteScratch={(path) => {
-                      setLayout((l) => {
-                        const tabs = l.tabs.filter((x) => x.path !== path);
-                        return { ...l, tabs, active: tabs.some((x) => x.id === l.active) ? l.active : tabs[tabs.length - 1]?.id ?? null };
-                      });
-                      void removeWithUndo(vault, path, "Scratch pad", () => vault.delete(path));
-                    }}
-                  />
+                  <TabAdder {...adder} />
                   </div>
                   <div className="tab-body">{activeTab && renderTab(activeTab)}</div>
                 </section>
@@ -853,9 +870,16 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         {zone === "note" && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
       </div>
 
-      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} />}
-      {quiz && <QuizPlay questions={quiz.questions} title={quiz.title} onClose={() => setQuiz(null)} />}
-      {touring && <Tour steps={STUDY_TOUR} onClose={() => setTouring(false)} />}
+      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} onReview={(c, gotIt) => void reviewCard(c, gotIt)} />}
+      {quiz && (
+        <QuizPlay
+          questions={quiz.questions}
+          title={quiz.title}
+          onClose={() => setQuiz(null)}
+          onFinish={(right, total) => vault.recordStudy({ quizzes: 1, quizRight: right, quizTotal: total })}
+          onMakeCards={addCardsToNote}
+        />
+      )}
       {menu && <PointMenu x={menu.x} y={menu.y} label={menu.kind === "note" ? "Note" : "Selected text"} sections={menu.kind === "note" ? noteMenu : selectionMenu} onClose={() => setMenu(null)} />}
       {paletteOpen && <CommandPalette open onClose={() => setPaletteOpen(false)} commands={commands} />}
       {settingsOpen && (
@@ -893,15 +917,18 @@ function findThemes(custom: Theme[]): Theme[] {
 }
 
 /** The side pane's + menu: add a task, open Tasks or Calendar, or a scratch pad (new or existing). */
-function TabAdder({ vault, onStart, onTasks, onCalendar, onPdf, onScratch, onDeleteScratch }: {
+function TabAdder({ vault, onTasks, onCalendar, onPdf, onScratch, onDeleteScratch, onDeleteFile, trigger }: {
   vault: Vault;
-  onStart: () => void;
   onTasks: (focusAdd: boolean) => void;
   onCalendar: () => void;
   /** Open this PDF beside the note, or with no path, upload one. */
   onPdf: (path?: VaultPath) => void;
   onScratch: (path?: VaultPath) => void;
   onDeleteScratch: (path: VaultPath) => void;
+  /** Delete an imported file (a PDF). */
+  onDeleteFile: (path: VaultPath) => void;
+  /** Draw the opening button as the top bar's side pane button instead of a plus. */
+  trigger?: "split";
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -921,15 +948,17 @@ function TabAdder({ vault, onStart, onTasks, onCalendar, onPdf, onScratch, onDel
   const pdfs = open ? [...vault.files.values()].filter((f) => f.path.toLowerCase().endsWith(".pdf")).sort((a, b) => b.mtime - a.mtime) : [];
   return (
     <div className="tab-adder" ref={ref}>
-      <button className="w-icon-btn" aria-label="Add to the side pane" title="Add a PDF, task, calendar or scratch pad" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <Icon name="plus" size={16} />
-      </button>
+      {trigger === "split" ? (
+        <button className="w-icon-btn" aria-label="Side pane" title="Open a PDF, tasks, calendar or scratch pad beside your note" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          <Icon name="split" />
+        </button>
+      ) : (
+        <button className="w-icon-btn" aria-label="Add to the side pane" title="Add a PDF, task, calendar or scratch pad" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          <Icon name="plus" size={16} />
+        </button>
+      )}
       {open && (
         <div className="w-popover tab-adder-menu" role="menu">
-          <button className="w-action" role="menuitem" onClick={pick(onStart)}>
-            <Icon name="sparkle" size={16} />
-            <span className="w-action-text"><span className="w-action-label">Study side</span><span className="w-action-desc">Every tool, with tips</span></span>
-          </button>
           <button className="w-action" role="menuitem" onClick={pick(() => onPdf())}>
             <Icon name="pdf" size={16} />
             <span className="w-action-text"><span className="w-action-label">PDF</span><span className="w-action-desc">Upload one to read here</span></span>
@@ -941,6 +970,9 @@ function TabAdder({ vault, onStart, onTasks, onCalendar, onPdf, onScratch, onDel
                 {pdfs.slice(0, 8).map((f) => (
                   <li key={f.path}>
                     <button className="tab-adder-item" title={f.path} onClick={pick(() => onPdf(f.path))}>{basename(f.path).replace(/\.pdf$/i, "")}</button>
+                    <button className="tab-adder-del" aria-label={`Delete ${basename(f.path)}`} title="Delete this PDF" onClick={() => onDeleteFile(f.path)}>
+                      <Icon name="trash" size={13} />
+                    </button>
                   </li>
                 ))}
               </ul>
