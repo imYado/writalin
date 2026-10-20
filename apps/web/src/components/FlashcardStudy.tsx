@@ -18,7 +18,8 @@ function shuffle<T>(xs: T[]): T[] {
 /**
  * Flip through cards one at a time. "Again" puts a card back at the end of the
  * pile, "Got it" takes it out, so a round ends once every card is known.
- * Keys: Space flips, 1 is Again, 2 is Got it.
+ * Keys: Space shows the answer, then Space again is Got it and the next card;
+ * 1 is Again, 2 is Got it.
  */
 export function FlashcardStudy({ cards, title, onClose }: { cards: StudyCard[]; title: string; onClose: () => void }) {
   const [round, setRound] = useState(0);
@@ -46,7 +47,8 @@ export function FlashcardStudy({ cards, title, onClose }: { cards: StudyCard[]; 
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
-        setFlipped((f) => !f);
+        if (flipped) answer(true);
+        else setFlipped(true);
       } else if (flipped && e.key === "1") answer(false);
       else if (flipped && e.key === "2") answer(true);
     };
@@ -75,7 +77,7 @@ export function FlashcardStudy({ cards, title, onClose }: { cards: StudyCard[]; 
             {flipped ? (
               <div className="study-actions">
                 <button className="w-btn study-again" onClick={() => answer(false)}>Again <kbd>1</kbd></button>
-                <button className="w-btn w-btn-primary" onClick={() => answer(true)}>Got it <kbd>2</kbd></button>
+                <button className="w-btn w-btn-primary" onClick={() => answer(true)}>Got it <kbd>Space</kbd></button>
               </div>
             ) : (
               <div className="study-actions">
