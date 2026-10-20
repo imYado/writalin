@@ -1,3 +1,4 @@
+import { suggestions } from "./suggestions";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, drawSelection, dropCursor, highlightActiveLine, keymap, placeholder as placeholderExt, rectangularSelection } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
@@ -69,6 +70,7 @@ export function writalinExtensions(o: WritalinEditorOptions): Extension[] {
     markdown({ base: markdownLanguage, addKeymap: true }),
     syntaxHighlighting(highlight),
     livePreview,
+    suggestions,
     tables,
     media,
     linkClicks,
