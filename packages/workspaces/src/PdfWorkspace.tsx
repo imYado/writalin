@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VaultPath } from "@writalin/shared";
 import { basename } from "@writalin/shared";
-import { pdfQuote } from "@writalin/vault";
+import { pdfQuote, type PdfHighlight } from "@writalin/vault";
 import { Icon, toast } from "@writalin/ui";
 import type { AiSourceText, WorkspaceProps } from "./types";
 import { loadPdf, type PdfDoc } from "./pdf";
@@ -29,6 +29,32 @@ const AI_TOOLS: { id: PdfAiTool; label: string }[] = [
 const MAX_AI_CHARS = 58_000;
 type AiScope = "page" | "all" | "pick" | "selection";
 
+/** Highlighter colors, drawn under the text with multiply so the words stay readable. */
+export const PDF_HL_COLORS = [
+  { id: "yellow", label: "Yellow", css: "rgba(255, 214, 0, 0.42)" },
+  { id: "green", label: "Green", css: "rgba(80, 200, 120, 0.38)" },
+  { id: "blue", label: "Blue", css: "rgba(80, 160, 255, 0.36)" },
+  { id: "pink", label: "Pink", css: "rgba(255, 105, 180, 0.36)" },
+] as const;
+const hlCss = (id: string) => (PDF_HL_COLORS.find((c) => c.id === id) ?? PDF_HL_COLORS[0]).css;
+
+type Rect = PdfHighlight["rects"][number];
+
+/** The selection's line boxes on one page, as fractions of the page, with each line's pieces joined. */
+function selectionRects(range: Range, pageEl: HTMLElement): Rect[] {
+  const box = pageEl.getBoundingClientRect();
+  const lines: DOMRect[] = [];
+  for (const r of [...range.getClientRects()].sort((a, b) => a.top - b.top || a.left - b.left)) {
+    if (r.width < 1 || r.height < 1 || r.bottom < box.top || r.top > box.bottom) continue;
+    const last = lines[lines.length - 1];
+    if (last && Math.abs(last.top - r.top) < last.height / 2 && r.left - last.right < 6) {
+      const left = Math.min(last.left, r.left);
+      lines[lines.length - 1] = new DOMRect(left, Math.min(last.top, r.top), Math.max(last.right, r.right) - left, Math.max(last.height, r.height));
+    } else lines.push(r);
+  }
+  return lines.map((r) => [(r.left - box.left) / box.width, (r.top - box.top) / box.height, r.width / box.width, r.height / box.height]);
+}
+
 /** [1, 2, 3, 7] → "1–3, 7" */
 export function formatPages(pages: number[]): string {
   const out: string[] = [];
@@ -49,7 +75,10 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   const [thumbs, setThumbs] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<number[]>([]);
-  const [sel, setSel] = useState<{ text: string; page: number; x: number; y: number } | null>(null);
+  const [sel, setSel] = useState<{ text: string; page: number; x: number; y: number; rects: Rect[] } | null>(null);
+  const [highlights, setHighlights] = useState<PdfHighlight[]>([]);
+  /** A highlight that was clicked, with where to show its menu. */
+  const [activeHl, setActiveHl] = useState<{ h: PdfHighlight; x: number; y: number } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   /** Pages ticked in "Choose pages" mode; null when not choosing. */
   const [picked, setPicked] = useState<Set<number> | null>(null);
@@ -169,6 +198,41 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     };
   }, [vault, path]);
 
+  useEffect(() => {
+    let alive = true;
+    setHighlights([]);
+    void vault.pdfHighlights(path).then((h) => alive && setHighlights(h)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [vault, path]);
+
+  const saveHighlights = (next: PdfHighlight[]) => {
+    setHighlights(next);
+    void vault.setPdfHighlights(path, next).catch(() => toast("Couldn't save the highlight. Try again.", { tone: "warn" }));
+  };
+  const highlight = (color: string) => {
+    if (!sel || !sel.rects.length) return;
+    const h: PdfHighlight = { id: Math.random().toString(36).slice(2, 10), page: sel.page, rects: sel.rects, text: sel.text, color, created: new Date().toISOString() };
+    saveHighlights([...highlights, h]);
+    window.getSelection()?.removeAllRanges();
+    setSel(null);
+  };
+  /** A click on highlighted text (with nothing selected) opens that highlight's menu. */
+  const onPagesClick = (e: React.MouseEvent) => {
+    if (window.getSelection()?.toString().trim()) return;
+    const pageEl = (e.target as Element).closest?.<HTMLElement>("[data-page]");
+    if (!pageEl) return setActiveHl(null);
+    const n = Number(pageEl.dataset.page);
+    const box = pageEl.getBoundingClientRect();
+    const x = (e.clientX - box.left) / box.width;
+    const y = (e.clientY - box.top) / box.height;
+    const h = highlights.find((h) => h.page === n && h.rects.some(([l, t, w, hh]) => x >= l && x <= l + w && y >= t && y <= t + hh));
+    if (!h) return setActiveHl(null);
+    const host = scroller.current!.getBoundingClientRect();
+    setActiveHl({ h, x: e.clientX - host.left, y: e.clientY - host.top + scroller.current!.scrollTop });
+  };
+
   const goTo = useCallback((n: number) => {
     const el = scroller.current?.querySelector<HTMLElement>(`[data-page="${n}"]`);
     el?.scrollIntoView({ block: "start" });
@@ -201,9 +265,11 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     const node = s.anchorNode instanceof Element ? s.anchorNode : s.anchorNode?.parentElement;
     const pageEl = node?.closest<HTMLElement>("[data-page]");
     if (!pageEl) return setSel(null);
-    const rect = s.getRangeAt(0).getBoundingClientRect();
+    const range = s.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
     const host = scroller.current!.getBoundingClientRect();
-    setSel({ text, page: Number(pageEl.dataset.page), x: rect.left - host.left + rect.width / 2, y: rect.top - host.top + scroller.current!.scrollTop });
+    setActiveHl(null);
+    setSel({ text, page: Number(pageEl.dataset.page), x: rect.left - host.left + rect.width / 2, y: rect.top - host.top + scroller.current!.scrollTop, rects: selectionRects(range, pageEl) });
   };
 
   const quote = () => {
@@ -281,14 +347,36 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
             ))}
           </nav>
         )}
-        <div className="ws-scroll pdf-pages" ref={scroller} onMouseUp={onMouseUp} onScroll={() => sel && setSel(null)}>
+        <div className="ws-scroll pdf-pages" ref={scroller} onMouseUp={onMouseUp} onClick={onPagesClick} onScroll={() => { if (sel) setSel(null); if (activeHl) setActiveHl(null); }}>
           {error && <p className="ws-empty">{error}</p>}
           {!doc && !error && <p className="ws-empty w-muted">Opening PDF…</p>}
           {doc && Array.from({ length: doc.numPages }, (_, i) => (
-            <PdfPage key={i} doc={doc} n={i + 1} scale={scale} cssZoom={zoom} textLayer pick={picked ? { checked: picked.has(i + 1), onToggle: () => togglePick(i + 1) } : undefined} />
+            <PdfPage key={i} doc={doc} n={i + 1} scale={scale} cssZoom={zoom} textLayer highlights={highlights} pick={picked ? { checked: picked.has(i + 1), onToggle: () => togglePick(i + 1) } : undefined} />
           ))}
+          {activeHl && (
+            <div className="pdf-quote-btn" style={{ left: activeHl.x, top: activeHl.y - 48 }} onMouseDown={(e) => e.preventDefault()} onClick={(e) => e.stopPropagation()}>
+              {PDF_HL_COLORS.map((c) => (
+                <button key={c.id} className="pdf-hl-swatch" style={{ background: c.css }} aria-label={`${c.label} highlight`} aria-pressed={activeHl.h.color === c.id} onClick={() => { saveHighlights(highlights.map((h) => (h.id === activeHl.h.id ? { ...h, color: c.id } : h))); setActiveHl(null); }} />
+              ))}
+              <button
+                className="w-btn w-btn-small"
+                onClick={() => {
+                  if (!currentNote) return toast("Open a note on the right first.", { tone: "warn" });
+                  insertIntoNote(pdfQuote(activeHl.h.text, path, activeHl.h.page), { source: path });
+                  toast(`Quoted page ${activeHl.h.page}.`);
+                  setActiveHl(null);
+                }}
+              >
+                Quote in note
+              </button>
+              <button className="w-btn w-btn-small" onClick={() => { saveHighlights(highlights.filter((h) => h.id !== activeHl.h.id)); setActiveHl(null); }}>Remove</button>
+            </div>
+          )}
           {sel && (
             <div className="pdf-quote-btn" style={{ left: sel.x, top: sel.y - 40 }} onMouseDown={(e) => e.preventDefault()}>
+              {sel.rects.length > 0 && PDF_HL_COLORS.map((c) => (
+                <button key={c.id} className="pdf-hl-swatch" style={{ background: c.css }} title={`Highlight ${c.label.toLowerCase()}`} aria-label={`Highlight ${c.label.toLowerCase()}`} onClick={() => highlight(c.id)} />
+              ))}
               <button className="w-btn w-btn-primary w-btn-small" onClick={quote}>Quote in note</button>
               {askAi && <button className="w-btn w-btn-small" onClick={() => void runAi("explain", "selection")}>Explain</button>}
               {askAi && <button className="w-btn w-btn-small" onClick={() => void runAi("flashcards", "selection")}>Flashcards</button>}
@@ -319,12 +407,13 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
 }
 
 /** One page: placeholder until near the viewport, then canvas + selectable text layer. */
-function PdfPage({ doc, n, scale, cssZoom = scale, textLayer, pick }: {
+function PdfPage({ doc, n, scale, cssZoom = scale, textLayer, pick, highlights }: {
   doc: PdfDoc;
   n: number;
   scale: number;
   cssZoom?: number;
   textLayer: boolean;
+  highlights?: PdfHighlight[];
   /** Shows a checkbox for choosing this page. */
   pick?: { checked: boolean; onToggle: () => void };
 }) {
@@ -357,6 +446,13 @@ function PdfPage({ doc, n, scale, cssZoom = scale, textLayer, pick }: {
   return (
     <div className={`pdf-page-wrap${pick?.checked ? " picked" : ""}`}>
       {box}
+      <div className="pdf-hl-layer" aria-hidden>
+        {highlights?.filter((h) => h.page === n).flatMap((h) =>
+          h.rects.map(([l, t, w, hh], k) => (
+            <span key={`${h.id}-${k}`} style={{ left: `${l * 100}%`, top: `${t * 100}%`, width: `${w * 100}%`, height: `${hh * 100}%`, background: hlCss(h.color) }} />
+          )),
+        )}
+      </div>
       {pick && (
         <label className="pdf-page-check">
           <input type="checkbox" checked={pick.checked} onChange={pick.onToggle} />

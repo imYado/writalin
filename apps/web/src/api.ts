@@ -76,9 +76,43 @@ export const aiApi = {
   saveKey: (key: { apiKey: string; provider: string; model?: string; baseUrl?: string }) => post<AiState>("ai/settings", key),
   setModel: (model: string) => post<AiState>("ai/settings", { model }),
   removeKey: () => del<AiState>("ai/settings"),
-  run: (tool: AiTool, text: string, question?: string, opts: AiRunOptions = {}) =>
-    post<{ text: string; model: string }>("ai/run", { tool, text, question, ...opts }),
+  run: (tool: AiTool, text: string, question?: string, opts: AiRunOptions = {}, onDelta?: (soFar: string) => void) =>
+    onDelta ? runStreaming({ tool, text, question, ...opts }, onDelta) : post<{ text: string; model: string }>("ai/run", { tool, text, question, ...opts }),
 };
+
+/** Ask for the answer as it's written; `onDelta` gets the text so far. Resolves with the tidied whole. */
+async function runStreaming(data: Record<string, unknown>, onDelta: (soFar: string) => void): Promise<{ text: string; model: string }> {
+  let res: Response;
+  try {
+    res = await fetch("/api/ai/run", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...data, stream: true }) });
+  } catch {
+    throw new ApiError(0, "You seem to be offline. Your notes are still saved on this computer.");
+  }
+  // Errors before the answer starts (and servers that don't stream) come back as plain JSON.
+  if (!res.body || !(res.headers.get("content-type") ?? "").includes("ndjson")) {
+    const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok || !body || typeof body.text !== "string") throw new ApiError(res.status, String(body?.error ?? `Request failed (${res.status}).`), body?.code as string | undefined);
+    return body as unknown as { text: string; model: string };
+  }
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  let soFar = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += value;
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const ev = JSON.parse(line) as { delta?: string; done?: boolean; text?: string; model?: string; error?: string; code?: string };
+      if (ev.error) throw new ApiError(502, ev.error, ev.code);
+      if (ev.done) return { text: ev.text ?? soFar, model: ev.model ?? "" };
+      if (ev.delta) onDelta((soFar += ev.delta));
+    }
+  }
+  throw new ApiError(502, "The answer was cut off. Try again.");
+}
 
 export interface RemoteVault {
   id: string;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Modal } from "@writalin/ui";
 import type { QuizQuestion } from "@writalin/vault";
 
@@ -7,7 +7,21 @@ import type { QuizQuestion } from "@writalin/vault";
  * at once whether it's right. Written: type an answer, then compare it with
  * the model answer and say whether you got it. Keys: 1–6 pick, Enter goes on.
  */
-export function QuizPlay({ questions, title, onClose }: { questions: QuizQuestion[]; title: string; onClose: () => void }) {
+export function QuizPlay({
+  questions,
+  title,
+  onClose,
+  onFinish,
+  onMakeCards,
+}: {
+  questions: QuizQuestion[];
+  title: string;
+  onClose: () => void;
+  /** Once per run through, with the score. */
+  onFinish?: (right: number, total: number) => void;
+  /** Turn the questions you missed into flashcards. */
+  onMakeCards?: (cards: { question: string; answer: string }[]) => boolean;
+}) {
   const [i, setI] = useState(0);
   const [picked, setPicked] = useState<number | null>(null);
   const [typed, setTyped] = useState("");
@@ -19,6 +33,14 @@ export function QuizPlay({ questions, title, onClose }: { questions: QuizQuestio
   const choice = !!q && q.options.length > 0;
   const done = i >= questions.length;
   const score = marks.filter(Boolean).length;
+  const missed = questions.filter((_, k) => marks[k] === false);
+  const [cardsMade, setCardsMade] = useState(false);
+  const reported = useRef(false);
+  useEffect(() => {
+    if (!done || reported.current) return;
+    reported.current = true;
+    onFinish?.(score, questions.length);
+  }, [done]);
 
   const mark = (right: boolean) => setMarks((m) => m.map((x, k) => (k === i ? right : x)));
   const pick = (k: number) => {
@@ -39,6 +61,19 @@ export function QuizPlay({ questions, title, onClose }: { questions: QuizQuestio
     setTyped("");
     setChecked(false);
     setMarks(questions.map(() => null));
+    setCardsMade(false);
+    reported.current = false;
+  };
+  const makeCards = () => {
+    const letter = (k: number) => String.fromCharCode(65 + k);
+    const ok = onMakeCards?.(
+      missed.map((m) => {
+        const right = m.options.length && m.correct >= 0 ? `${letter(m.correct)}. ${m.options[m.correct]}` : "";
+        const answer = [right, m.answer].filter(Boolean).join(": ") || "(no answer given)";
+        return { question: m.question.replace(/\s+/g, " "), answer: answer.replace(/\s+/g, " ") };
+      }),
+    );
+    if (ok) setCardsMade(true);
   };
 
   useEffect(() => {
@@ -66,6 +101,11 @@ export function QuizPlay({ questions, title, onClose }: { questions: QuizQuestio
               {score} of {questions.length} right
             </h3>
             <p className="w-muted">{score === questions.length ? "Every one. Nice." : "Go through it again to lock in the ones you missed."}</p>
+            {onMakeCards && missed.length > 0 && (
+              <button className="w-btn quiz-make-cards" disabled={cardsMade} onClick={makeCards}>
+                {cardsMade ? `Added ${missed.length} flashcard${missed.length === 1 ? "" : "s"} to your note` : `Make flashcards from the ${missed.length} you missed`}
+              </button>
+            )}
             <div className="study-actions">
               <button className="w-btn" onClick={restart}>Try again</button>
               <button className="w-btn w-btn-primary" onClick={onClose}>Done</button>

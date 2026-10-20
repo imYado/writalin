@@ -1,5 +1,5 @@
 import { KeyValueDB, emptySyncState, syncVault, type SyncReport, type SyncState, type Vault } from "@writalin/vault";
-import { httpTransport, syncApi } from "../api";
+import { ApiError, httpTransport, syncApi } from "../api";
 
 interface SyncLink {
   remoteId: string;
@@ -30,9 +30,20 @@ let running: Promise<SyncReport | null> | null = null;
 export function runSync(localVaultId: string, vault: Vault): Promise<SyncReport | null> {
   if (running) return running;
   running = (async () => {
-    const link = await getSyncLink(localVaultId);
+    let link = await getSyncLink(localVaultId);
     if (!link) return null;
-    const { state, report } = await syncVault(vault.store, httpTransport(link.remoteId), link.state);
+    let result;
+    try {
+      result = await syncVault(vault.store, httpTransport(link.remoteId), link.state);
+    } catch (e) {
+      // The synced copy was cleaned up (or deleted on another computer): join the
+      // newest copy with this vault's name, or start a fresh one, and merge these notes in.
+      if (!(e instanceof ApiError && e.status === 404)) throw e;
+      const same = (await syncApi.vaults()).find((r) => r.name === vault.name);
+      link = await linkSync(localVaultId, same ?? { name: vault.name });
+      result = await syncVault(vault.store, httpTransport(link.remoteId), link.state);
+    }
+    const { state, report } = result;
     await links.set(localVaultId, { ...link, state });
     if (report.pulled.length || report.deletedLocal.length || report.conflicts.length) await vault.refresh();
     return report;

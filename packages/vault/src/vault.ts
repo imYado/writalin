@@ -1,14 +1,30 @@
-import type { NoteMeta, Task, VaultPath } from "@writalin/shared";
+import type { CardSchedule, Flashcard, NoteMeta, Task, VaultPath } from "@writalin/shared";
 import { Emitter, isHiddenPath, isMarkdown, isoDate, isoDateTime, joinPath, noteName, normalizePath, sanitizeFileName, dirname, basename, stripExt } from "@writalin/shared";
 import type { FileStat, FileStore } from "./fs/types";
 import { parseNote } from "./markdown/parse";
 import { splitFrontmatter, updateFrontmatter } from "./markdown/frontmatter";
 import { rewriteWikiLinks, rewriteMarkdownLinks } from "./markdown/links";
 import { newBlockId, toggleTaskLine } from "./markdown/tasks";
+import { isDue, nextSchedule, setCardSchedule } from "./markdown/flashcards";
 import { tagMatches, normalizeTag } from "./markdown/tags";
 import { SearchIndex } from "./search";
-import { ACTIVITY_PATH, addActivity, emptyActivity, mergeActivity, type ActivityLog } from "./activity";
+import { ACTIVITY_PATH, addActivity, emptyActivity, mergeActivity, type ActivityLog, type DayActivity } from "./activity";
 import { DEFAULT_SETTINGS, SETTINGS_PATH, SCRATCHPAD_PATH, REMINDERS_PATH, SCRATCH_FOLDER, TASKS_PATH, isScratch, isSystemNote, type VaultSettings } from "./settings";
+
+/** Highlights drawn on PDFs, by PDF path. Kept beside the vault's settings so they sync too. */
+export const PDF_HIGHLIGHTS_PATH = ".writalin/pdf-highlights.json";
+
+export interface PdfHighlight {
+  id: string;
+  /** 1-based. */
+  page: number;
+  /** Boxes as fractions of the page: left, top, width, height. */
+  rects: [number, number, number, number][];
+  text: string;
+  /** A name from the highlight palette, like "yellow". */
+  color: string;
+  created: string;
+}
 
 export type VaultEvent =
   | { type: "indexed" }
@@ -177,7 +193,16 @@ export class Vault {
 
   /** Count words written today. Deleting text never lowers the count. */
   recordWords(words: number, date = isoDate()): void {
-    addActivity(this.activity, date, { words: Math.max(0, words), edits: 1 });
+    this.record({ words: Math.max(0, words), edits: 1 }, date);
+  }
+
+  /** Count study work (cards reviewed, quiz scores) towards today's activity. */
+  recordStudy(delta: Pick<DayActivity, "cards" | "quizzes" | "quizRight" | "quizTotal">, date = isoDate()): void {
+    this.record(delta, date);
+  }
+
+  private record(delta: Partial<DayActivity>, date: string): void {
+    addActivity(this.activity, date, delta);
     this.events.emit({ type: "activity" });
     clearTimeout(this.activityTimer);
     this.activityTimer = setTimeout(() => void this.saveActivity(), 3000);
@@ -288,6 +313,7 @@ export class Vault {
 
   async delete(path: VaultPath): Promise<void> {
     await this.store.remove(path);
+    if (!isMarkdown(path)) void this.editHighlights((all) => (all[path] ? void delete all[path] : false)).catch(() => {});
     for (const p of [...this.files.keys()]) if (p === path || p.startsWith(path + "/")) this.dropFile(p);
     this.events.emit({ type: "deleted", path });
   }
@@ -328,9 +354,47 @@ export class Vault {
         updated.push(path);
       }
     }
+    await this.editHighlights((all) => {
+      if (!all[from]) return false;
+      all[to] = all[from]!;
+      delete all[from];
+    });
     this.events.emit({ type: "renamed", from, to });
     return updated;
   }
+
+  // ---------- PDF highlights ----------
+
+  async pdfHighlights(path: VaultPath): Promise<PdfHighlight[]> {
+    await this.highlightWrites;
+    return (await this.readJson<Record<string, PdfHighlight[]>>(PDF_HIGHLIGHTS_PATH))?.[path] ?? [];
+  }
+
+  /** Replace one PDF's highlights. */
+  setPdfHighlights(path: VaultPath, list: PdfHighlight[]): Promise<void> {
+    return this.editHighlights((all) => {
+      if (list.length) all[path] = list;
+      else delete all[path];
+    });
+  }
+
+  /** Read, change and write the highlights file, one change at a time. `edit` returns false for no change. */
+  private editHighlights(edit: (all: Record<string, PdfHighlight[]>) => boolean | void): Promise<void> {
+    const run = async () => {
+      if (!this.files.has(PDF_HIGHLIGHTS_PATH) && !(await this.store.stat(PDF_HIGHLIGHTS_PATH))) {
+        const all: Record<string, PdfHighlight[]> = {};
+        if (edit(all) === false || !Object.keys(all).length) return;
+        return this.writeJson(PDF_HIGHLIGHTS_PATH, all);
+      }
+      const all = (await this.readJson<Record<string, PdfHighlight[]>>(PDF_HIGHLIGHTS_PATH)) ?? {};
+      if (edit(all) === false) return;
+      await this.writeJson(PDF_HIGHLIGHTS_PATH, all);
+    };
+    const p = this.highlightWrites.then(run, run);
+    this.highlightWrites = p.catch(() => {});
+    return p;
+  }
+  private highlightWrites: Promise<void> = Promise.resolve();
 
   // ---------- links ----------
 
@@ -421,6 +485,32 @@ export class Vault {
     if (next == null) lines.splice(idx, 1);
     else lines[idx] = next + cr;
     await this.write(task.path, lines.join("\n"));
+  }
+
+  /**
+   * Save how a flashcard review went, as the Spaced Repetition plugin would:
+   * the next due date goes into the note beside the card. Reviews of the same
+   * note run one after another so none is lost.
+   */
+  reviewCard(card: Flashcard, gotIt: boolean): Promise<CardSchedule | null> {
+    const run = async () => {
+      const schedule = nextSchedule(card.schedule, gotIt);
+      const { text } = await this.read(card.path);
+      const next = setCardSchedule(text, card, schedule);
+      if (next == null) return null;
+      await this.write(card.path, next);
+      return schedule;
+    };
+    const p = this.reviews.then(run, run);
+    this.reviews = p.catch(() => null);
+    this.recordStudy({ cards: 1 });
+    return p;
+  }
+  private reviews: Promise<unknown> = Promise.resolve();
+
+  /** Cards due for review today (or never reviewed), across the vault. */
+  dueCards(today = isoDate()): Flashcard[] {
+    return [...this.notes.values()].flatMap((n) => n.flashcards).filter((c) => isDue(c, today));
   }
 
   /** Check or uncheck a task in its note. Fails safely if the line moved. */

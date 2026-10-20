@@ -53,11 +53,25 @@ export interface Task {
   blockId?: string;
 }
 
+/** When a card is next due, in the Spaced Repetition plugin's terms. */
+export interface CardSchedule {
+  /** YYYY-MM-DD. */
+  due: string;
+  /** Days between reviews. */
+  interval: number;
+  /** 130 and up; 250 for a new card. */
+  ease: number;
+}
+
 export interface Flashcard {
   path: VaultPath;
   line: number;
   question: string;
   answer: string;
+  /** 0 for the card as written, 1 for the reversed side of a `:::` or `??` card. */
+  side?: 0 | 1;
+  /** Undefined for a card that has never been reviewed. */
+  schedule?: CardSchedule;
 }
 
 export interface NoteMeta {

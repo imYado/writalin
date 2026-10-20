@@ -9,7 +9,15 @@ export interface DayActivity {
   words: number;
   /** Number of saves. */
   edits: number;
+  /** Flashcards reviewed. */
+  cards?: number;
+  /** Quizzes finished, and their right answers out of questions. */
+  quizzes?: number;
+  quizRight?: number;
+  quizTotal?: number;
 }
+
+const COUNTS = ["words", "edits", "cards", "quizzes", "quizRight", "quizTotal"] as const;
 
 export interface ActivityLog {
   version: 1;
@@ -29,8 +37,9 @@ export function countWords(text: string): number {
 }
 
 export function addActivity(log: ActivityLog, day: string, delta: Partial<DayActivity>): ActivityLog {
-  const cur = log.days[day] ?? { words: 0, edits: 0 };
-  log.days[day] = { words: cur.words + (delta.words ?? 0), edits: cur.edits + (delta.edits ?? 0) };
+  const next: DayActivity = { ...(log.days[day] ?? { words: 0, edits: 0 }) };
+  for (const k of COUNTS) if (delta[k]) next[k] = (next[k] ?? 0) + delta[k]!;
+  log.days[day] = next;
   return log;
 }
 
@@ -40,7 +49,11 @@ export function mergeActivity(a: ActivityLog, b: ActivityLog): ActivityLog {
   for (const [d, v] of Object.entries(a.days)) out.days[d] = { ...v };
   for (const [d, v] of Object.entries(b.days)) {
     const cur = out.days[d];
-    out.days[d] = cur ? { words: Math.max(cur.words, v.words), edits: Math.max(cur.edits, v.edits) } : { ...v };
+    if (!cur) {
+      out.days[d] = { ...v };
+      continue;
+    }
+    for (const k of COUNTS) if (v[k] != null || cur[k] != null) cur[k] = Math.max(cur[k] ?? 0, v[k] ?? 0);
   }
   return out;
 }
@@ -170,4 +183,30 @@ export function activityYears(log: ActivityLog, created: Map<string, number>): n
   for (const [d, v] of Object.entries(log.days)) if (v.words > 0 || v.edits > 0) years.add(Number(d.slice(0, 4)));
   for (const [d, n] of created) if (n > 0) years.add(Number(d.slice(0, 4)));
   return [...years].filter((y) => y > 1970).sort((a, b) => b - a);
+}
+
+export interface StudyStats {
+  /** Days in a row, up to today, with a flashcard review or a quiz. Today not yet counts as kept. */
+  streak: number;
+  cardsToday: number;
+  cardsWeek: number;
+  quizzesWeek: number;
+  /** Right answers out of questions in the last 7 days' quizzes, or null with none. */
+  quizPercentWeek: number | null;
+}
+
+export function studyStats(log: ActivityLog, today = new Date()): StudyStats {
+  const studied = (d: string) => !!(log.days[d]?.cards || log.days[d]?.quizzes);
+  let streak = 0;
+  // A streak isn't broken until today ends, so start from yesterday if today is empty.
+  for (let d = studied(isoDate(today)) ? today : addDays(today, -1); studied(isoDate(d)); d = addDays(d, -1)) streak++;
+  let cardsWeek = 0, quizzesWeek = 0, right = 0, total = 0;
+  for (let i = 0; i < 7; i++) {
+    const day = log.days[isoDate(addDays(today, -i))];
+    cardsWeek += day?.cards ?? 0;
+    quizzesWeek += day?.quizzes ?? 0;
+    right += day?.quizRight ?? 0;
+    total += day?.quizTotal ?? 0;
+  }
+  return { streak, cardsToday: log.days[isoDate(today)]?.cards ?? 0, cardsWeek, quizzesWeek, quizPercentWeek: total ? Math.round((right / total) * 100) : null };
 }

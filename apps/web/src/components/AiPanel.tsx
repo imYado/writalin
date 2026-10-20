@@ -62,6 +62,8 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
   const [state, setState] = useState<AiState | null>(null);
   const [busy, setBusy] = useState<AiTool | null>(null);
   const [result, setResult] = useState<{ tool: AiTool; text: string; footer?: string } | null>(null);
+  /** The answer so far, while it's still being written. */
+  const [partial, setPartial] = useState<string | null>(null);
   /** Text handed over from elsewhere (a PDF), used instead of the note until cleared. */
   const [pinned, setPinned] = useState<AiSource | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -147,7 +149,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
     setBusy(tool);
     setResult(null);
     try {
-      const r = await aiApi.run(tool, text, tool === "ask" ? question : undefined, { quizKind, count: quizCount, extra: extra.trim() || undefined });
+      const r = await aiApi.run(tool, text, tool === "ask" ? question : undefined, { quizKind, count: quizCount, extra: extra.trim() || undefined }, setPartial);
       setResult({ tool, text: r.text, footer: text ? src?.footer : undefined });
       if (tool === "ask") {
         setAsked(question);
@@ -158,6 +160,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       setError(e instanceof ApiError ? e.message : "Something went wrong. Try again.");
     } finally {
       setBusy(null);
+      setPartial(null);
     }
   };
 
@@ -285,7 +288,8 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
         </div>
       )}
 
-      {busy && <div className="ai-loading" aria-live="polite"><span /><span /><span /></div>}
+      {busy && !partial && <div className="ai-loading" aria-live="polite"><span /><span /><span /></div>}
+      {busy && partial && <div className="ai-result ai-streaming"><div className="ai-result-text">{partial}</div></div>}
       {error && <p className="ai-error" role="alert">{error}</p>}
       {result && (() => {
         const cards = result.tool === "flashcards" ? cardsFromText(result.text) : [];

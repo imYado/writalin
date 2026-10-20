@@ -21,22 +21,39 @@ function shuffle<T>(xs: T[]): T[] {
  * Keys: Space shows the answer, then Space again is Got it and the next card;
  * 1 is Again, 2 is Got it.
  */
-export function FlashcardStudy({ cards, title, onClose }: { cards: StudyCard[]; title: string; onClose: () => void }) {
+export function FlashcardStudy<C extends StudyCard>({
+  cards,
+  title,
+  onClose,
+  onReview,
+}: {
+  cards: C[];
+  title: string;
+  onClose: () => void;
+  /** Called once per card per round, with how the first try went, so it can be scheduled. */
+  onReview?: (card: C, gotIt: boolean) => void;
+}) {
   const [round, setRound] = useState(0);
   const initial = useMemo(() => shuffle(cards), [cards, round]);
   const [queue, setQueue] = useState(initial);
   const [flipped, setFlipped] = useState(false);
   const [missed, setMissed] = useState(0);
+  const [reviewed] = useState(() => new Set<C>());
   useEffect(() => {
     setQueue(initial);
     setFlipped(false);
     setMissed(0);
+    reviewed.clear();
   }, [initial]);
 
   const card = queue[0];
   const known = cards.length - queue.length;
   const answer = (gotIt: boolean) => {
     if (!card) return;
+    if (!reviewed.has(card)) {
+      reviewed.add(card);
+      onReview?.(card, gotIt);
+    }
     if (!gotIt) setMissed((m) => m + 1);
     setQueue((q) => (gotIt ? q.slice(1) : [...q.slice(1), q[0]!]));
     setFlipped(false);

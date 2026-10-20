@@ -204,8 +204,14 @@ function build(view: EditorView): DecorationSet {
     }
     for (let n = sepNo + 1; n <= a; n++) {
       const l = doc.line(n);
-      lineDeco(l.from, editing ? "cm-card-ma cm-card-ma-editing" : open ? "cm-card-ma cm-card-ma-shown" : "cm-card-ma");
       const note = SR_NOTE_RE.exec(l.text);
+      // A line holding only the review note collapses away, as in Obsidian's reading view.
+      if (note && note.index === 0 && !editing) {
+        lineDeco(l.from, "cm-card-srline");
+        decos.push(hide.range(l.from, l.to));
+        continue;
+      }
+      lineDeco(l.from, editing ? "cm-card-ma cm-card-ma-editing" : open ? "cm-card-ma cm-card-ma-shown" : "cm-card-ma");
       if (note && !editing) decos.push(hide.range(l.from + note.index, l.to));
     }
   };
