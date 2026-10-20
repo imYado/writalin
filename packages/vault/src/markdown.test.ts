@@ -9,6 +9,7 @@ import {
   toggleTaskLine,
   formatTaskLine,
   parseFlashcards,
+  parseQuiz,
   cardsFromText,
   formatCards,
   parseNote,
@@ -185,5 +186,33 @@ describe("blocks", () => {
     expect(pdfQuote("Line one\nLine two", "attachments/lecture 3.pdf", 4)).toBe(
       "> Line one\n> Line two\n>\n> [source p.4](attachments/lecture%203.pdf#page=4)\n",
     );
+  });
+});
+
+describe("parseQuiz", () => {
+  it("reads multiple-choice and written questions with their answer key", () => {
+    const md = [
+      "### Quiz",
+      "1. What makes ATP?",
+      "    - A. Ribosomes",
+      "    - B. Mitochondria",
+      "    - C. Nucleus",
+      "    - D. Golgi",
+      "",
+      "2. Why do cells divide?",
+      "",
+      "> [!success]- Answers",
+      "> 1. B. Mitochondria run respiration.",
+      "> 2. To grow and to repair tissue.",
+    ].join("\n");
+    expect(parseQuiz(md)).toEqual([
+      { question: "What makes ATP?", options: ["Ribosomes", "Mitochondria", "Nucleus", "Golgi"], correct: 1, answer: "Mitochondria run respiration." },
+      { question: "Why do cells divide?", options: [], correct: -1, answer: "To grow and to repair tissue." },
+    ]);
+  });
+
+  it("accepts bold letters and a dash after the letter", () => {
+    const md = "1. Q?\n   A) one\n   B) two\n\n> [!success]- Answers\n> 1. **A** – because";
+    expect(parseQuiz(md)[0]).toMatchObject({ options: ["one", "two"], correct: 0, answer: "because" });
   });
 });

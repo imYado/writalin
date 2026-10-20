@@ -42,6 +42,14 @@ body {
 ::selection { background: var(--w-selection); }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
+/* Phones: no double-tap or pinch zoom, and no text resizing on rotate. */
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (pointer: coarse) {
+  /* iOS zooms into any field under 16px, so fields are at least that big on touch screens. */
+  input, select, textarea { font-size: max(16px, 1em); }
+  /* Keyboard shortcuts mean nothing without a keyboard. */
+  .w-action kbd { display: none; }
+}
 a { color: var(--w-link); }
 :focus-visible { outline: none; box-shadow: var(--w-ring); border-radius: var(--w-radius-sm); }
 .w-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

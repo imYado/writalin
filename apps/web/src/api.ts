@@ -38,6 +38,12 @@ export const auth = {
 };
 
 export type AiMode = "builtin" | "own";
+export interface AiRunOptions {
+  quizKind?: "choice" | "written";
+  count?: number;
+  /** Extra wishes for the AI, e.g. "make it harder". */
+  extra?: string;
+}
 export type AiTool = "explain" | "summarize" | "flashcards" | "quiz" | "steps" | "mainpoint" | "whereWasI" | "ask";
 
 export interface AiState {
@@ -70,7 +76,8 @@ export const aiApi = {
   saveKey: (key: { apiKey: string; provider: string; model?: string; baseUrl?: string }) => post<AiState>("ai/settings", key),
   setModel: (model: string) => post<AiState>("ai/settings", { model }),
   removeKey: () => del<AiState>("ai/settings"),
-  run: (tool: AiTool, text: string, question?: string) => post<{ text: string; model: string }>("ai/run", { tool, text, question }),
+  run: (tool: AiTool, text: string, question?: string, opts: AiRunOptions = {}) =>
+    post<{ text: string; model: string }>("ai/run", { tool, text, question, ...opts }),
 };
 
 export interface RemoteVault {
