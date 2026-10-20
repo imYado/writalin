@@ -14,12 +14,13 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@writalin/editor": "workspace:*",
     "@writalin/shared": "workspace:*",
-    "@writalin/vault": "workspace:*",
     "@writalin/ui": "workspace:*",
+    "@writalin/vault": "workspace:*",
     "pdfjs-dist": "^5.3.31",
     "react": "^19.1.0",
-    "@writalin/editor": "workspace:*"
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.1.8"

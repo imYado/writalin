@@ -43,6 +43,10 @@ export interface AiRunOptions {
   count?: number;
   /** Extra wishes for the AI, e.g. "make it harder". */
   extra?: string;
+  /** Earlier answers in this conversation, each followed by the next question. */
+  thread?: { answer: string; followUp: string }[];
+  /** Stops the answer part-way (the Stop button). */
+  signal?: AbortSignal;
 }
 export type AiTool = "explain" | "summarize" | "flashcards" | "quiz" | "steps" | "mainpoint" | "whereWasI" | "ask";
 
@@ -76,16 +80,17 @@ export const aiApi = {
   saveKey: (key: { apiKey: string; provider: string; model?: string; baseUrl?: string }) => post<AiState>("ai/settings", key),
   setModel: (model: string) => post<AiState>("ai/settings", { model }),
   removeKey: () => del<AiState>("ai/settings"),
-  run: (tool: AiTool, text: string, question?: string, opts: AiRunOptions = {}, onDelta?: (soFar: string) => void) =>
-    onDelta ? runStreaming({ tool, text, question, ...opts }, onDelta) : post<{ text: string; model: string }>("ai/run", { tool, text, question, ...opts }),
+  run: (tool: AiTool, text: string, question?: string, { signal, ...opts }: AiRunOptions = {}, onDelta?: (soFar: string) => void) =>
+    onDelta ? runStreaming({ tool, text, question, ...opts }, onDelta, signal) : post<{ text: string; model: string }>("ai/run", { tool, text, question, ...opts }),
 };
 
 /** Ask for the answer as it's written; `onDelta` gets the text so far. Resolves with the tidied whole. */
-async function runStreaming(data: Record<string, unknown>, onDelta: (soFar: string) => void): Promise<{ text: string; model: string }> {
+async function runStreaming(data: Record<string, unknown>, onDelta: (soFar: string) => void, signal?: AbortSignal): Promise<{ text: string; model: string }> {
   let res: Response;
   try {
-    res = await fetch("/api/ai/run", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...data, stream: true }) });
-  } catch {
+    res = await fetch("/api/ai/run", { method: "POST", credentials: "same-origin", signal, headers: { "content-type": "application/json" }, body: JSON.stringify({ ...data, stream: true }) });
+  } catch (e) {
+    if (signal?.aborted) throw e;
     throw new ApiError(0, "You seem to be offline. Your notes are still saved on this computer.");
   }
   // Errors before the answer starts (and servers that don't stream) come back as plain JSON.
@@ -95,6 +100,8 @@ async function runStreaming(data: Record<string, unknown>, onDelta: (soFar: stri
     return body as unknown as { text: string; model: string };
   }
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  // Stop ends the read straight away, even where aborting the fetch alone wouldn't.
+  signal?.addEventListener("abort", () => void reader.cancel().catch(() => {}), { once: true });
   let buf = "";
   let soFar = "";
   for (;;) {
@@ -111,6 +118,7 @@ async function runStreaming(data: Record<string, unknown>, onDelta: (soFar: stri
       if (ev.delta) onDelta((soFar += ev.delta));
     }
   }
+  if (signal?.aborted) throw new DOMException("Stopped", "AbortError");
   throw new ApiError(502, "The answer was cut off. Try again.");
 }
 

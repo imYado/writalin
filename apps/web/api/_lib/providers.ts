@@ -78,15 +78,24 @@ export async function listModels(t: Omit<ChatTarget, "model">): Promise<string[]
   return ids?.length ? ids : null;
 }
 
-/** One OpenAI-style chat completion. With `onDelta`, the answer streams in and each piece is passed on as it comes. */
-export async function chat(t: ChatTarget, system: string, user: string, mode: "own" | "builtin", onDelta?: (text: string) => void): Promise<{ text: string; model: string }> {
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/**
+ * One OpenAI-style chat completion: a single question, or a conversation that
+ * ends with the person's turn. With `onDelta`, the answer streams in and each
+ * piece is passed on as it comes.
+ */
+export async function chat(t: ChatTarget, system: string, user: string | ChatMessage[], mode: "own" | "builtin", onDelta?: (text: string) => void, signal?: AbortSignal): Promise<{ text: string; model: string }> {
   let res: Response;
   try {
     res = await fetch(`${t.baseUrl}/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${t.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: t.model, max_tokens: 4000, stream: !!onDelta, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
-      signal: AbortSignal.timeout(110_000),
+      body: JSON.stringify({ model: t.model, max_tokens: 4000, stream: !!onDelta, messages: [{ role: "system", content: system }, ...(typeof user === "string" ? [{ role: "user", content: user }] : user)] }),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(110_000)]) : AbortSignal.timeout(110_000),
       redirect: "error",
     });
   } catch {

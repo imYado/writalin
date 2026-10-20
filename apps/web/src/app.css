@@ -184,6 +184,19 @@
 .ai-loading span { width: 8px; height: 8px; border-radius: 50%; background: var(--w-accent); animation: w-bounce 1s var(--w-ease) infinite; }
 .ai-loading span:nth-child(2) { animation-delay: 120ms; }
 .ai-loading span:nth-child(3) { animation-delay: 240ms; }
+.ai-progress { margin: 0; }
+.ai-stop { align-self: center; display: inline-flex; align-items: center; gap: 4px; }
+.ai-turn { display: flex; flex-direction: column; gap: 6px; }
+.ai-turn + .ai-turn, .ai-result > .ai-streaming { padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--w-text) 10%, transparent); }
+.ai-earlier { max-height: 14vh; opacity: 0.8; }
+.ai-stopped { margin: 0; font-style: italic; }
+.ai-followup .w-input { font-size: 14px; padding-block: 8px; background: var(--w-surface); }
+.ai-recent summary { cursor: pointer; padding: 4px 0; }
+.ai-recent ul { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ai-recent li { display: flex; align-items: center; gap: 4px; }
+.ai-recent-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 8px 10px; border: 0; border-radius: 12px; background: var(--w-soft); color: inherit; text-align: left; cursor: pointer; }
+.ai-recent-open:hover { background: var(--w-soft-2); }
+.ai-recent-title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 @keyframes w-bounce { 0%, 100% { opacity: 0.3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-5px); } }
 
 /* ---------- welcome, login, splash ---------- */
