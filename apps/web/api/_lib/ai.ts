@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db.js";
 import { HttpError } from "./http.js";
 import { decryptSecret } from "./secrets.js";
-import { chat, listModels, PROVIDERS, type ProviderId } from "./providers.js";
+import { chat, listModels, PROVIDERS, type ChatMessage, type ProviderId } from "./providers.js";
 import { tidyAiMarkdown } from "./format.js";
 
 export type AiMode = "builtin" | "own";
@@ -38,6 +38,8 @@ export interface ToolOptions {
   count?: number;
   /** Extra wishes typed by the student, e.g. "focus on chapter 2" or "make it harder". */
   extra?: string;
+  /** Earlier answers in this conversation, each followed by the student's next question. */
+  thread?: { answer: string; followUp: string }[];
 }
 
 /**
@@ -191,22 +193,29 @@ export async function runTool(
   question?: string,
   opts: ToolOptions = {},
   onDelta?: (text: string) => void,
+  signal?: AbortSignal,
 ): Promise<{ text: string; model: string }> {
   const instruction = tool === "quiz" ? quizInstruction(opts.quizKind ?? "choice", opts.count ?? 5) : AI_TOOLS[tool];
-  const user = [
+  const first = [
     instruction,
     opts.extra ? `\nExtra wishes from the student (follow them, but keep the layout and format rules above): ${opts.extra}` : "",
     question ? `\nQuestion: ${question}` : "",
     text ? `\n<note>\n${text}\n</note>` : "",
   ].join("");
-  const out = await callModel(target, user, onDelta);
+  // A follow-up replays the conversation so far, then adds the new question.
+  const messages: ChatMessage[] = [{ role: "user", content: first }];
+  for (const turn of opts.thread ?? []) {
+    messages.push({ role: "assistant", content: turn.answer });
+    messages.push({ role: "user", content: `Follow-up from the student (same note, same format rules): ${turn.followUp}` });
+  }
+  const out = await callModel(target, messages, onDelta, signal);
   return { ...out, text: tidyAiMarkdown(out.text) };
 }
 
-async function callModel(target: AiTarget, user: string, onDelta?: (text: string) => void): Promise<{ text: string; model: string }> {
+async function callModel(target: AiTarget, messages: ChatMessage[], onDelta?: (text: string) => void, signal?: AbortSignal): Promise<{ text: string; model: string }> {
   const { apiKey, mode } = target;
   if (target.provider !== "anthropic") {
-    return chat({ baseUrl: target.baseUrl, apiKey, model: target.model, label: PROVIDERS[target.provider].label }, SYSTEM, user, mode, onDelta);
+    return chat({ baseUrl: target.baseUrl, apiKey, model: target.model, label: PROVIDERS[target.provider].label }, SYSTEM, messages, mode, onDelta, signal);
   }
   const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 120_000 });
   try {
@@ -219,8 +228,8 @@ async function callModel(target: AiTarget, user: string, onDelta?: (text: string
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
       system: SYSTEM,
-      messages: [{ role: "user", content: user }],
-    });
+      messages,
+    }, { signal });
     if (onDelta) stream.on("text", (piece) => onDelta(piece));
     const res = await stream.finalMessage();
     if (res.stop_reason === "refusal") {

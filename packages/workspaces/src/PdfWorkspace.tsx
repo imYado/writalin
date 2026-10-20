@@ -5,6 +5,7 @@ import { pdfQuote, type PdfHighlight } from "@writalin/vault";
 import { Icon, toast } from "@writalin/ui";
 import type { AiSourceText, WorkspaceProps } from "./types";
 import { loadPdf, type PdfDoc } from "./pdf";
+import { pickRelevant } from "./relevance";
 
 interface Props extends WorkspaceProps {
   path: VaultPath;
@@ -27,7 +28,14 @@ const AI_TOOLS: { id: PdfAiTool; label: string }[] = [
 ];
 /** Matches the server's limit on how much text one request may send. */
 const MAX_AI_CHARS = 58_000;
-type AiScope = "page" | "all" | "pick" | "selection";
+/**
+ * A question about many pages sends only the best-matching ones, up to about
+ * this much text: answers stay quick, cheap and within small free-tier limits.
+ */
+const ASK_CHARS = 16_000;
+/** Scanned pages read with text recognition per request; each takes a few seconds. */
+const MAX_OCR_PAGES = 20;
+type AiScope = "page" | "all" | "pick" | "hits" | "selection";
 
 /** Highlighter colors, drawn under the text with multiply so the words stay readable. */
 export const PDF_HL_COLORS = [
@@ -75,6 +83,8 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   const [thumbs, setThumbs] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<number[]>([]);
+  /** What `hits` were found for. */
+  const [hitsFor, setHitsFor] = useState("");
   const [sel, setSel] = useState<{ text: string; page: number; x: number; y: number; rects: Rect[] } | null>(null);
   const [highlights, setHighlights] = useState<PdfHighlight[]>([]);
   /** A highlight that was clicked, with where to show its menu. */
@@ -85,8 +95,32 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
 
 
   const link = (p?: number) => `${path.replace(/ /g, "%20")}${p ? `#page=${p}` : ""}`;
-  /** Collect the selection, or some pages, with a link back to the source. */
-  const buildSource = async (scope: AiScope): Promise<AiSourceText | null> => {
+  /** Page texts, reading scanned pages (no text in them) with text recognition. */
+  const readPages = async (pages: number[], progress?: (msg: string) => void): Promise<string[]> => {
+    const d = doc!;
+    const texts: string[] = [];
+    for (const n of pages) texts.push(await d.pageText(n));
+    const scanned = pages.map((n, i) => (texts[i]!.trim() ? 0 : n)).filter(Boolean).slice(0, MAX_OCR_PAGES);
+    if (!scanned.length) return texts;
+    const say = progress ?? ((m: string) => toast(m));
+    if (!progress) say(scanned.length > 1 ? `Reading ${scanned.length} scanned pages…` : "Reading the scanned page…");
+    for (const [k, n] of scanned.entries()) {
+      if (progress) say(scanned.length > 1 ? `Reading scanned page ${k + 1} of ${scanned.length}…` : "Reading the scanned page…");
+      try {
+        texts[pages.indexOf(n)] = await d.ocrPage(n);
+      } catch {
+        toast("Couldn't read the scanned pages. Check your connection and try again.", { tone: "warn" });
+        break;
+      }
+    }
+    return texts;
+  };
+  /**
+   * Collect the selection, or some pages, with a link back to the source. With a
+   * question (`query`) and more pages than fit, only the pages that best match
+   * the question are sent.
+   */
+  const buildSource = async (scope: AiScope, query?: string, progress?: (msg: string) => void): Promise<AiSourceText | null> => {
     if (!doc) return null;
     const name = basename(path);
     if (scope === "selection") {
@@ -96,30 +130,56 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     const pages =
       scope === "page" ? [page]
       : scope === "all" ? Array.from({ length: doc.numPages }, (_, i) => i + 1)
+      : scope === "hits" ? hits
       : [...(picked ?? [])].sort((a, b) => a - b);
-    if (!pages.length) return (toast("Tick the pages you want first.", { tone: "warn" }), null);
+    if (!pages.length) return (toast(scope === "hits" ? "Search the PDF first." : "Tick the pages you want first.", { tone: "warn" }), null);
     if (pages.length === 1) {
       const n = pages[0]!;
-      const text = await doc.pageText(n);
-      if (!text.trim()) return (toast("This page has no text to read. It may be a scanned image.", { tone: "warn" }), null);
+      const [text = ""] = await readPages([n], progress);
+      if (!text.trim()) return (toast("This page has no text to read.", { tone: "warn" }), null);
       return { text, label: `page ${n} of “${name}”`, footer: `[source p.${n}](${link(n)})` };
     }
+    // Text first, so a question can be matched against every page before picking.
+    const texts: string[] = [];
+    for (const n of pages) texts.push(await doc.pageText(n));
+    const total = texts.reduce((len, t) => len + t.length + 12, 0);
+    let chosen = pages;
+    let matched = false;
+    if (query?.trim() && total > ASK_CHARS) {
+      const best = pickRelevant(query, texts, ASK_CHARS).map((i) => pages[i]!);
+      if (best.length) {
+        chosen = best;
+        matched = true;
+      }
+    }
+    const budget = matched ? ASK_CHARS + 4000 : MAX_AI_CHARS;
     let text = "";
     const sent: number[] = [];
-    for (const n of pages) {
-      if (text.length >= MAX_AI_CHARS) break;
-      text += `\n\n[Page ${n}]\n${await doc.pageText(n)}`;
+    const chosenTexts = await readPages(chosen.slice(0, 400), progress);
+    let blank = 0;
+    for (const [i, n] of chosen.entries()) {
+      if (text.length >= budget || i >= chosenTexts.length) break;
+      if (!chosenTexts[i]!.trim()) {
+        blank++;
+        continue;
+      }
+      text += `\n\n[Page ${n}]\n${chosenTexts[i]}`;
       sent.push(n);
     }
-    text = text.slice(0, MAX_AI_CHARS).trim();
-    if (!text.replace(/\[Page \d+\]/g, "").trim()) return (toast("These pages have no text to read. They may be scanned images.", { tone: "warn" }), null);
-    const cut = sent.length < pages.length || text.length >= MAX_AI_CHARS;
-    const whole = scope === "all" && !cut;
+    text = text.slice(0, budget).trim();
+    if (!text.replace(/\[Page \d+\]/g, "").trim()) return (toast("These pages have no text to read.", { tone: "warn" }), null);
+    const cut = !matched && (sent.length < pages.length || text.length >= budget);
+    const whole = scope === "all" && !cut && !matched;
     const what = whole ? `all of “${name}”` : `pages ${formatPages(sent)} of “${name}”`;
     return {
       text,
-      label: cut ? `${what} (the rest was too long to send at once)` : what,
+      label: matched
+        ? `pages ${formatPages(sent)} of “${name}”, the ones that match your question`
+        : blank > 0 ? `${what} (${blank} scanned page${blank > 1 ? "s" : ""} couldn't be read this time)`
+        : cut ? `${what} (the rest was too long to send at once)`
+        : what,
       footer: whole ? `Source: [${name}](${link()})` : `Source: [${name}, pages ${formatPages(sent)}](${link(sent[0])})`,
+      pages: sent,
     };
   };
   /** Send the selection, or some pages, to the AI dock. */
@@ -158,23 +218,24 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       scopes: [
         { id: "page", label: `This page (${page})` },
         { id: "all", label: `All pages (${doc.numPages})` },
+        ...(hits.length > 1 ? [{ id: "hits", label: `Pages with “${hitsFor}” (${hits.length})`, hint: "The pages your search found" }] : []),
         { id: "pick", label: picked?.size ? `Chosen pages (${picked.size})` : "Choose pages…", hint: "Tick pages in the PDF" },
         { id: "selection", label: "Highlighted text", disabled: !sel, hint: sel ? undefined : "Highlight text in the PDF first" },
       ],
       onScope: (scope) => {
         if (scope === "pick" && !latest.current.picked?.size) latest.current.startPicking();
       },
-      build: (scope) => {
+      build: (scope, q, progress) => {
         const l = latest.current;
         // Choosing pages starts with ticking them in the PDF.
         if (scope === "pick" && !l.picked?.size) {
           l.startPicking();
           return Promise.resolve(null);
         }
-        return l.buildSource(scope as AiScope);
+        return l.buildSource(scope as AiScope, q, progress);
       },
     });
-  }, [registerAiSource, doc, path, page, picked, sel]);
+  }, [registerAiSource, doc, path, page, picked, sel, hits, hitsFor]);
   useEffect(() => () => registerAiSource?.(null), [registerAiSource]);
 
   useEffect(() => {
@@ -285,6 +346,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     if (!doc || !query.trim()) return setHits([]);
     const found = await doc.search(query);
     setHits(found);
+    setHitsFor(query.trim());
     if (found.length) goTo(found[0]!);
     else toast("No matches in this PDF.");
   };

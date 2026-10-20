@@ -2,6 +2,8 @@ import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 /**
@@ -57,10 +59,41 @@ function devApi(): Plugin {
   };
 }
 
+/**
+ * Text recognition for scanned PDF pages runs in the browser. Its files (the
+ * worker, the WebAssembly engine and the English data) are served from our own
+ * site under /ocr/, so nothing loads from a third-party CDN. The app only
+ * fetches them the first time someone needs a scanned page read.
+ */
+function ocrFiles(): Plugin {
+  const pkg = (name: string) => dirname(createRequire(import.meta.url).resolve(`${name}/package.json`));
+  const files: Record<string, string> = {
+    "worker.min.js": join(pkg("tesseract.js"), "dist/worker.min.js"),
+    "core-simd-lstm.wasm.js": join(pkg("tesseract.js-core"), "tesseract-core-simd-lstm.wasm.js"),
+    "core-lstm.wasm.js": join(pkg("tesseract.js-core"), "tesseract-core-lstm.wasm.js"),
+    "eng.traineddata.gz": join(pkg("@tesseract.js-data/eng"), "4.0.0_best_int/eng.traineddata.gz"),
+  };
+  return {
+    name: "writalin-ocr-files",
+    configureServer(server) {
+      server.middlewares.use("/ocr", (req, res, next) => {
+        const file = files[(req.url ?? "").replace(/^\/+|\?.*$/g, "")];
+        if (!file) return next();
+        res.setHeader("content-type", file.endsWith(".js") ? "text/javascript" : "application/octet-stream");
+        res.end(readFileSync(file));
+      });
+    },
+    generateBundle() {
+      for (const [name, file] of Object.entries(files)) this.emitFile({ type: "asset", fileName: `ocr/${name}`, source: readFileSync(file) });
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     react(),
     devApi(),
+    ocrFiles(),
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["icons/icon16.png", "icons/icon48.png", "icons/icon180.png"],
@@ -82,6 +115,8 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,woff2,mjs}"],
+        // Text recognition is big and rarely needed: fetched on first use, not installed up front.
+        globIgnores: ["ocr/**"],
         navigateFallbackDenylist: [/^\/api\//],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
       },

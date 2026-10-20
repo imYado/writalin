@@ -8,6 +8,8 @@ export interface AiSourceText {
   label: string;
   /** Markdown added under the result when it goes into the note. */
   footer?: string;
+  /** The PDF pages sent, when only some of them were. */
+  pages?: number[];
 }
 
 /** What the open workspace (e.g. a PDF) offers the AI dock to read. */
@@ -19,8 +21,12 @@ export interface WorkspaceAiSource {
   defaultScope: string;
   /** A scope was picked in the dock, e.g. to start ticking pages. */
   onScope?: (scope: string) => void;
-  /** Collect the text for a scope; null when there is nothing to send (it says why itself). */
-  build: (scope: string) => Promise<AiSourceText | null>;
+  /**
+   * Collect the text for a scope; null when there is nothing to send (it says why itself).
+   * With a question, a long scope sends only the parts that match it. `progress`
+   * hears about slow steps, like reading scanned pages.
+   */
+  build: (scope: string, question?: string, progress?: (msg: string) => void) => Promise<AiSourceText | null>;
 }
 
 /** What every left-pane workspace gets from the app. */

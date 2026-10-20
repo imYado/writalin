@@ -14,8 +14,23 @@ export interface PdfDoc {
   /** Pages (1-based) whose text contains the query. Text extraction runs in PDF.js's worker. */
   search(query: string): Promise<number[]>;
   pageText(n: number): Promise<string>;
+  /**
+   * Read a scanned page (one with no text in it) with text recognition. The
+   * reader (~10 MB, English) loads the first time; afterwards the page's text
+   * is kept, so search and AI find it too.
+   */
+  ocrPage(n: number): Promise<string>;
   destroy(): Promise<void>;
 }
+
+/** Whether this browser's WebAssembly has SIMD, which makes text recognition about twice as fast. */
+const wasmSimd = () => {
+  try {
+    return WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]));
+  } catch {
+    return false;
+  }
+};
 
 export async function loadPdf(data: ArrayBuffer): Promise<PdfDoc> {
   const pdf = await pdfjs.getDocument({ data: new Uint8Array(data) }).promise;
@@ -29,6 +44,38 @@ export async function loadPdf(data: ArrayBuffer): Promise<PdfDoc> {
       textCache.set(n, t);
     }
     return t;
+  };
+  const ocrTried = new Set<number>();
+  let ocr: Promise<import("tesseract.js").Worker> | null = null;
+  const ocrPage = async (n: number) => {
+    const known = await pageText(n);
+    if (known.trim() || ocrTried.has(n)) return known;
+    ocr ??= import("tesseract.js")
+      .then((t) =>
+        // Served from this site (see the web app's Vite config), not a CDN.
+        t.createWorker("eng", t.OEM.LSTM_ONLY, {
+          workerPath: "/ocr/worker.min.js",
+          corePath: wasmSimd() ? "/ocr/core-simd-lstm.wasm.js" : "/ocr/core-lstm.wasm.js",
+          langPath: "/ocr",
+        }),
+      )
+      .catch((e: unknown) => {
+        ocr = null;
+        throw e;
+      });
+    const worker = await ocr;
+    const page = await pdf.getPage(n);
+    // About 200 dpi: sharp enough to read small print, small enough to stay quick.
+    const vp = page.getViewport({ scale: Math.min(3, 1700 / page.getViewport({ scale: 1 }).width) });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.floor(vp.width);
+    canvas.height = Math.floor(vp.height);
+    await page.render({ canvas, canvasContext: canvas.getContext("2d")!, viewport: vp }).promise;
+    const { data } = await worker.recognize(canvas);
+    const text = data.text.replace(/\s+/g, " ").trim();
+    textCache.set(n, text);
+    ocrTried.add(n);
+    return text;
   };
   return {
     numPages: pdf.numPages,
@@ -81,6 +128,10 @@ export async function loadPdf(data: ArrayBuffer): Promise<PdfDoc> {
       return out;
     },
     pageText,
-    destroy: () => pdf.destroy(),
+    ocrPage,
+    async destroy() {
+      if (ocr) void ocr.then((w) => w.terminate()).catch(() => {});
+      await pdf.destroy();
+    },
   };
 }
