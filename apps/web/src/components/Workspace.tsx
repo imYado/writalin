@@ -376,7 +376,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       { id: "ws-scratch-last", title: "Open last scratch pad", description: "Pick up the last brain dump", icon: "scratch", group: "Side pane", shortcut: "Ctrl+/", keywords: "inbox quick", run: () => void openScratch("latest") },
       { id: "ws-task-add", title: "Add a task", description: "To this note", icon: "checkSquare", group: "Side pane", keywords: "todo new", run: () => openTab({ kind: "tasks", focus: Date.now() }) },
       { id: "ws-start", title: "Study side", description: "PDFs, AI, tasks and more beside your note", icon: "sparkle", group: "Side pane", keywords: "help tools", run: () => openTab({ kind: "start" }) },
-      { id: "tour", title: "Take the tour", description: "A quick look at the study side, PDFs and AI", icon: "bulb", group: "Help", keywords: "help tutorial guide", run: () => { goZone("note"); openTab({ kind: "start" }); setTimeout(() => setTouring(true), 400); } },
+      // The tour points at buttons and shortcuts; on a phone there's nothing to show.
+      ...(matchMedia("(pointer: coarse)").matches ? [] : [{ id: "tour", title: "Take the tour", description: "A quick look at the study side, PDFs and AI", icon: "bulb", group: "Help", keywords: "help tutorial guide", run: () => { goZone("note"); openTab({ kind: "start" }); setTimeout(() => setTouring(true), 400); } } satisfies Command]),
       { id: "ws-tasks", title: "Tasks beside this note", description: "This note's checklist in the side pane", icon: "split", group: "Side pane", run: () => openTab({ kind: "tasks" }) },
       { id: "ws-cal", title: "Calendar beside this note", description: "Open Calendar in the side pane", icon: "split", group: "Side pane", run: () => openTab({ kind: "calendar" }) },
       { id: "close-left", title: "Close side pane", description: "Back to just the note", icon: "close", group: "Side pane", run: () => setLayout((l) => ({ ...l, leftOpen: false })) },

@@ -7,8 +7,10 @@ import "@writalin/workspaces/styles.css";
 import "./app.css";
 import { App } from "./App";
 import { installGlow } from "@writalin/ui";
+import { trackKeyboard } from "./keyboard";
 
 installGlow();
+trackKeyboard();
 
 registerSW({ immediate: true });
 

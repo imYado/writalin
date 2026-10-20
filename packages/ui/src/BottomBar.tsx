@@ -57,6 +57,8 @@ export function BottomBar({ items, compact = false, openId: controlled, onOpenCh
             aria-pressed={it.active || openId === it.id}
             aria-haspopup={it.panel ? "dialog" : undefined}
             aria-expanded={it.panel ? openId === it.id : undefined}
+            // Keep focus in the note, so a phone keyboard stays up while you format.
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               if (it.panel) setOpenId((o) => (o === it.id ? null : it.id));
               else {
@@ -90,7 +92,7 @@ export function ActionGrid({ actions }: { actions: GridAction[] }) {
   return (
     <div className="w-action-grid">
       {actions.map((a) => (
-        <button key={a.label} className="w-action" onClick={a.onClick} disabled={a.disabled} title={a.hint}>
+        <button key={a.label} className="w-action" onMouseDown={(e) => e.preventDefault()} onClick={a.onClick} disabled={a.disabled} title={a.hint}>
           {a.icon && <Icon name={a.icon} size={16} />}
           <span className="w-action-text">
             <span className="w-action-label">{a.label}</span>

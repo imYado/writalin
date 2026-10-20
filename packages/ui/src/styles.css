@@ -48,7 +48,9 @@ html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adj
   /* iOS zooms into any field under 16px, so fields are at least that big on touch screens. */
   input, select, textarea { font-size: max(16px, 1em); }
   /* Keyboard shortcuts mean nothing without a keyboard. */
-  .w-action kbd { display: none; }
+  /* No keyboard on a touch screen, so no shortcut hints. */
+  kbd, .w-palette-foot { display: none; }
+  .cm-editor kbd { display: revert; }
 }
 a { color: var(--w-link); }
 :focus-visible { outline: none; box-shadow: var(--w-ring); border-radius: var(--w-radius-sm); }
