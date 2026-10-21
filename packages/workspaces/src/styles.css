@@ -145,6 +145,8 @@
 /* PDF */
 .ws-pdf .pdf-page { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
 .pdf-page-input { width: 60px; }
+/* Phones: the tab already shows the file name, so the toolbar keeps its room for the controls. */
+@media (max-width: 600px) { .ws-pdf .ws-toolbar .ws-title { display: none; } .pdf-search { flex: 1 1 100%; } .pdf-search .w-input { flex: 1; width: auto; min-width: 0; } }
 .pdf-search { display: flex; gap: 6px; margin-left: auto; }
 .pdf-search .w-input { width: 150px; }
 .pdf-body { flex: 1; display: flex; min-height: 0; }

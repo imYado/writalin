@@ -32,6 +32,8 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+/* Nothing may make the page wider than the screen: on phones that lets the whole app slide sideways. */
+html, body { overflow-x: hidden; overflow-x: clip; overscroll-behavior-x: none; }
 body {
   background: var(--w-bg);
   color: var(--w-text);
@@ -157,7 +159,8 @@ kbd {
 }
 .w-timer[data-phase="paused"] .w-timer-time { opacity: 0.6; }
 .w-timer[data-phase="break"] .w-timer-ring { background: conic-gradient(var(--w-success) calc(var(--w-progress, 0) * 360deg), var(--w-soft-2) 0); }
-.w-timer-menu { top: calc(100% + 10px); width: 270px; display: flex; flex-direction: column; gap: 12px; }
+.w-timer-menu { top: calc(100% + 10px); width: min(270px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 12px; }
+@media (max-width: 400px) { .w-timer-menu { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 64px); left: 12px; right: 12px; width: auto; } }
 .w-timer-toast {
   position: absolute; top: calc(100% + 10px); z-index: 40; width: 290px; padding: 16px;
   background: var(--w-surface); border-radius: var(--w-radius); box-shadow: var(--w-shadow-lg);

@@ -69,8 +69,10 @@
 .tab-close { border: 0; background: none; color: inherit; padding: 5px 8px 5px 4px; cursor: pointer; opacity: 0.5; border-radius: 999px; }
 .tab-close:hover { opacity: 1; }
 .tab-adder { position: relative; flex: none; }
-.tab-adder-menu { top: calc(100% + 6px); right: 0; width: 260px; display: flex; flex-direction: column; gap: 2px; padding: 8px; max-height: min(520px, 70vh); overflow-y: auto; }
+.tab-adder-menu { top: calc(100% + 6px); right: 0; width: min(260px, calc(100vw - 24px)); display: flex; flex-direction: column; gap: 2px; padding: 8px; max-height: min(520px, 70vh); overflow-y: auto; }
 .tab-adder-menu .w-action { width: 100%; }
+/* On a phone the menu spans the screen under the top bar instead of hanging off its button. */
+@media (max-width: 600px) { .tab-adder-menu { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 64px); left: 12px; right: 12px; width: auto; } }
 .tab-adder-label { padding: 10px 10px 4px; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--w-text-muted); font-weight: 600; }
 .tab-adder-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .tab-adder-sep { height: 1px; margin: 6px 4px; background: var(--w-soft); }
@@ -97,7 +99,7 @@
 .note-editor > .w-editor { flex: 1; min-height: 0; }
 .note-more { width: 32px; height: 32px; color: var(--w-text-muted); }
 .note-head { max-width: var(--w-page-width); width: 100%; margin: 0 auto; padding: 32px 10px 0; flex: none; }
-.note-title { width: 100%; border: 0; background: transparent; font: 750 2.1rem/1.2 var(--w-note-font); letter-spacing: -0.02em; color: var(--w-heading); padding: 0; outline: none; }
+.note-title { display: block; width: 100%; resize: none; overflow: hidden; border: 0; background: transparent; font: 750 2.1rem/1.2 var(--w-note-font); letter-spacing: -0.02em; color: var(--w-heading); padding: 0; outline: none; }
 .note-title:focus-visible { outline: none; box-shadow: none; }
 .note-title::placeholder { color: var(--w-text-muted); opacity: 0.5; }
 .note-sub { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; font-size: 13px; min-height: 22px; }
@@ -126,7 +128,9 @@
 .home-inner { max-width: 1000px; margin: 0 auto; padding: 20px 24px 48px; }
 .home-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .home-title { margin: 0 0 6px; font-size: 30px; font-weight: 750; letter-spacing: -0.025em; color: var(--w-heading); }
-.vault-switch select { font-weight: 500; font-size: 13px; padding: 6px 30px 6px 12px; border-radius: 999px; }
+.home-head > div { min-width: 0; max-width: 100%; }
+.vault-switch { max-width: 100%; }
+.vault-switch select { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; font-size: 13px; padding: 6px 30px 6px 12px; border-radius: 999px; }
 .home-search { display: flex; align-items: center; gap: 10px; margin: 22px 0; padding: 0 18px; border-radius: 999px; background-color: var(--w-surface); color: var(--w-text-muted); box-shadow: var(--w-shadow); }
 .home-search .w-input { flex: 1; border: 0; padding: 14px 0; background: transparent !important; box-shadow: none !important; font-size: 16px; outline: none; }
 .home-card { background: var(--w-surface); border-radius: 24px; padding: 20px 22px; box-shadow: var(--w-shadow); margin-bottom: 22px; animation: w-rise 360ms var(--w-ease) both; }
@@ -159,7 +163,7 @@
 .ai-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
 .ai-head h3 { margin: 0 !important; }
 .ai-ask { display: flex; gap: 8px; }
-.ai-ask .w-input { flex: 1; border-radius: 999px; padding-block: 10px; font-size: 15px; }
+.ai-ask .w-input { flex: 1; min-width: 0; border-radius: 999px; padding-block: 10px; font-size: 15px; }
 .ai-use { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ai-use .w-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; }
 .ai-use-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
