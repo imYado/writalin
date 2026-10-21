@@ -132,24 +132,26 @@
 .vault-switch { max-width: 100%; }
 .vault-switch select { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; font-size: 13px; padding: 6px 30px 6px 12px; border-radius: 999px; }
 .home-search { display: flex; align-items: center; gap: 10px; margin: 22px 0; padding: 0 18px; border-radius: 999px; background-color: var(--w-surface); color: var(--w-text-muted); box-shadow: var(--w-shadow); }
-.home-search .w-input { flex: 1; border: 0; padding: 14px 0; background: transparent !important; box-shadow: none !important; font-size: 16px; outline: none; }
+.home-search .w-input { flex: 1; min-width: 0; border: 0; padding: 14px 0; background: transparent !important; box-shadow: none !important; font-size: 16px; outline: none; }
 .home-card { background: var(--w-surface); border-radius: 24px; padding: 20px 22px; box-shadow: var(--w-shadow); margin-bottom: 22px; animation: w-rise 360ms var(--w-ease) both; }
 .home-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
 .home-card-head h2 { margin: 0; font-size: 16px; font-weight: 650; }
 .home-card-head p { margin: 2px 0 0; }
-.home-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 28px; }
+.home-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 28px; }
+/* Grid and flex items may shrink below their content, so a long name never widens the page (Safari is strict here). */
+.home-inner, .home-grid > *, .home-card, .note-list, .note-list li { min-width: 0; }
 .home-section { margin-bottom: 24px; animation: w-rise 420ms var(--w-ease) both; }
 .home-section h2 { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--w-text-muted); margin: 0 0 10px; }
 .home-h2-row { display: flex; align-items: center; justify-content: space-between; }
 .home-h2-row .w-btn { text-transform: none; letter-spacing: 0; font-size: 12px; padding: 3px 8px; }
 .note-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .note-list button {
-  width: 100%; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 12px 16px; border-radius: 18px; border: 0;
+  width: 100%; min-width: 0; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 12px 16px; border-radius: 18px; border: 0;
   background-color: var(--w-surface); cursor: pointer; box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
   transition: transform var(--w-anim) var(--w-ease), box-shadow var(--w-anim);
 }
 .note-list button:hover { box-shadow: var(--w-shadow); transform: translateY(-1px); }
-.note-list-name { font-weight: 600; color: var(--w-text); }
+.note-list-name { font-weight: 600; color: var(--w-text); overflow-wrap: anywhere; }
 .note-list-meta, .note-list-snippet { font-size: 12px; color: var(--w-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
 .today-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
@@ -293,7 +295,7 @@
   .split-open { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }
   .note-pane.with-outline { grid-template-columns: 1fr; }
   .outline { display: none; }
-  .home-grid { grid-template-columns: 1fr; }
+  .home-grid { grid-template-columns: minmax(0, 1fr); }
   .topbar { grid-template-columns: auto 1fr auto; padding-left: 12px; }
   .topbar-search span, .topbar-search kbd { display: none; }
   .topbar-zone.w-muted { display: none; }
@@ -372,8 +374,8 @@
 
 /* ---------- home: study ---------- */
 .home-study-due { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-radius: 16px; background: var(--w-soft); }
-.home-study-due > div { display: flex; flex-direction: column; gap: 2px; }
-.home-study-stats { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.home-study-due > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.home-study-stats { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .home-study-stats li { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 14px; background: var(--w-soft); }
 .home-study-stats strong { font-size: 1.15rem; }
 .home-study-stats span { font-size: 11.5px; color: var(--w-text-muted); line-height: 1.3; }
