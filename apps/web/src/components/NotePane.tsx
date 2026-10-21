@@ -29,6 +29,13 @@ interface Props {
   onContextMenu: (e: MouseEvent) => void;
 }
 
+/** Grow the title box to fit its text, so long titles wrap onto more lines. */
+const fitTitle = (el: HTMLTextAreaElement | null) => {
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${el.scrollHeight}px`;
+};
+
 const cursorKey = (vault: string, path: string) => `writalin.cursor:${vault}:${path}`;
 
 /** The note on the right: title, tags, editor, outline and "Linked from". */
@@ -195,16 +202,22 @@ export const NotePane = forwardRef<NotePaneHandle, Props>(function NotePane(p, r
     <div className={`note-pane${p.outlineOpen ? " with-outline" : ""}`}>
       <div className="note-scroll">
         <div className="note-head">
-          <input
+          {/* A text area, so a long title wraps instead of running off the screen. */}
+          <textarea
             className="note-title"
+            rows={1}
+            ref={(el) => fitTitle(el)}
             value={title}
             aria-label="Note title"
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              setTitle(e.target.value.replace(/\n/g, " "));
+              fitTitle(e.target);
+            }}
             onBlur={() => void rename()}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                (e.target as HTMLInputElement).blur();
+                (e.target as HTMLTextAreaElement).blur();
                 editor.current?.focus();
               }
               if (e.key === "Escape") setTitle(noteName(path));

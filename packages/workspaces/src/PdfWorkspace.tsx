@@ -247,6 +247,11 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       try {
         const blob = await vault.store.readBinary(path);
         loaded = await loadPdf(await blob.arrayBuffer());
+        if (!alive) return void loaded.destroy();
+        // Start at "fit width" when the page is wider than the pane, e.g. on a phone.
+        const room = (scroller.current?.clientWidth ?? 0) - 32;
+        const { w } = await loaded.pageSize(1);
+        if (room > 0 && w > room) setZoom(Math.max(0.3, Math.floor((room / w) * 100) / 100));
         if (alive) setDoc(loaded);
         else void loaded.destroy();
       } catch (e) {
@@ -370,7 +375,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
           />
           / {doc?.numPages ?? "…"}
         </span>
-        <button className="w-icon-btn" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))} aria-label="Zoom out">−</button>
+        <button className="w-icon-btn" onClick={() => setZoom((z) => Math.max(0.3, +(z - 0.1).toFixed(2)))} aria-label="Zoom out">−</button>
         <span className="w-muted">{Math.round(zoom * 100)}%</span>
         <button className="w-icon-btn" onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} aria-label="Zoom in">+</button>
         {openAi && (
