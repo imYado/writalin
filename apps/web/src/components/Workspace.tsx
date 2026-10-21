@@ -475,43 +475,18 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       label: "Format",
       icon: "tools",
       panel: (close) => (
-        <>
-          <h3>Text</h3>
-          <ActionGrid
-            actions={[
-              { label: "Bold", desc: "Make it stand out", hint: "Ctrl+B", onClick: () => ed()?.wrap("**") },
-              { label: "Italic", desc: "Slanted emphasis", hint: "Ctrl+I", onClick: () => ed()?.wrap("_") },
-              { label: "Highlight", desc: "Like a marker pen", hint: "Ctrl+Shift+H", onClick: () => ed()?.wrap("==") },
-              { label: "Strikethrough", desc: "Cross it out", onClick: () => ed()?.wrap("~~") },
-              { label: "Code", desc: "Monospaced text", hint: "Ctrl+E", onClick: () => ed()?.wrap("`") },
-            ].map((x) => ({ ...x, disabled: noNote }))}
-          />
-          <h3>Color</h3>
-          <ColorRows disabled={noNote} onPick={(kind, c) => ed()?.color(kind, c)} />
-          <h3>Structure</h3>
-          <ActionGrid
-            actions={[
-              { label: "Heading 1", desc: "Big section title", onClick: () => ed()?.prefix("# ") },
-              { label: "Heading 2", desc: "Medium section title", onClick: () => ed()?.prefix("## ") },
-              { label: "Heading 3", desc: "Small section title", onClick: () => ed()?.prefix("### ") },
-              { label: "Bullet list", desc: "Points with dots", onClick: () => ed()?.prefix("- ") },
-              { label: "Numbered list", desc: "Steps in order", onClick: () => ed()?.prefix("1. ") },
-              { label: "Checklist", desc: "Boxes to tick off", onClick: () => ed()?.prefix("- [ ] ") },
-              { label: "Quote", desc: "Indented quotation", onClick: () => ed()?.prefix("> ") },
-            ].map((x) => ({ ...x, disabled: noNote }))}
-          />
-          <h3>View</h3>
-          <ActionGrid
-            actions={[
-              { label: focusMode ? "Leave focus mode" : "Focus mode", desc: "Fade all but this paragraph", icon: "focus", hint: "Ctrl+.", onClick: () => { setFocusMode((f) => !f); close(); } },
-              { label: outlineOpen ? "Hide outline" : "Outline", desc: "Jump between headings", icon: "list", onClick: () => { setOutlineOpen((o) => !o); close(); } },
-              { label: printLayout ? "Hide page breaks" : "Page breaks", desc: "Where A4 pages end", icon: "printer", onClick: () => { setPrintLayout((p) => !p); close(); } },
-              { label: "Collapse all", desc: "Fold every section", onClick: () => ed()?.foldAll(), disabled: noNote },
-              { label: "Expand all", desc: "Unfold every section", onClick: () => ed()?.unfoldAll(), disabled: noNote },
-              { label: "All commands", desc: "Search everything", icon: "search", hint: "Ctrl+K", onClick: () => { close(); setPaletteOpen(true); } },
-            ]}
-          />
-        </>
+        <FormatPanel
+          disabled={noNote}
+          run={(fn) => { const e = ed(); if (e) fn(e); }}
+          view={[
+            { label: "Focus", on: focusMode, hint: "Ctrl+.", onClick: () => { setFocusMode((f) => !f); close(); } },
+            { label: "Outline", on: outlineOpen, onClick: () => { setOutlineOpen((o) => !o); close(); } },
+            { label: "Page breaks", on: printLayout, onClick: () => { setPrintLayout((p) => !p); close(); } },
+            { label: "Fold all", onClick: () => ed()?.foldAll(), disabled: noNote },
+            { label: "Unfold all", onClick: () => ed()?.unfoldAll(), disabled: noNote },
+            { label: "All commands", hint: "Ctrl+K", onClick: () => { close(); setPaletteOpen(true); } },
+          ]}
+        />
       ),
     },
     {
@@ -1031,33 +1006,77 @@ function TabAdder({ vault, onTasks, onCalendar, onPdf, onScratch, onDeleteScratc
   );
 }
 
-/** Swatches for text colour and coloured highlights, used in the Format panel. */
-function ColorRows({ disabled, onPick }: { disabled: boolean; onPick: (kind: "text" | "highlight", color: string | null) => void }) {
-  return (
-    <div className="color-rows">
-      <div className="color-row" role="group" aria-label="Text color">
-        <span className="w-muted w-small">Text</span>
+type Editor = NonNullable<NotePaneHandle["editor"]>;
+interface ViewChip { label: string; on?: boolean; hint?: string; disabled?: boolean; onClick: () => void }
+
+const STYLES: { label: string; cls: string; hint?: string; apply: (e: Editor) => void }[] = [
+  { label: "Bold", cls: "fmt-bold", hint: "Ctrl+B", apply: (e) => e.wrap("**") },
+  { label: "Italic", cls: "fmt-italic", hint: "Ctrl+I", apply: (e) => e.wrap("_") },
+  { label: "Highlight", cls: "fmt-mark", hint: "Ctrl+Shift+H", apply: (e) => e.wrap("==") },
+  { label: "Strike", cls: "fmt-strike", apply: (e) => e.wrap("~~") },
+  { label: "Code", cls: "fmt-code", hint: "Ctrl+E", apply: (e) => e.wrap("`") },
+  { label: "Title", cls: "fmt-h1", apply: (e) => e.prefix("# ") },
+  { label: "Heading", cls: "fmt-h2", apply: (e) => e.prefix("## ") },
+  { label: "Subheading", cls: "fmt-h3", apply: (e) => e.prefix("### ") },
+  { label: "• List", cls: "", apply: (e) => e.prefix("- ") },
+  { label: "1. List", cls: "", apply: (e) => e.prefix("1. ") },
+  { label: "☐ Checklist", cls: "", apply: (e) => e.prefix("- [ ] ") },
+  { label: "❝ Quote", cls: "fmt-quote", apply: (e) => e.prefix("> ") },
+];
+
+/**
+ * The Format panel: each style is a small chip written in that style. Color is
+ * one chip that swaps the row for the colour choices. On phones it's a single
+ * row you scroll sideways, so it stays small above the keyboard.
+ */
+function FormatPanel({ disabled, run, view }: { disabled: boolean; run: (fn: (e: Editor) => void) => void; view: ViewChip[] }) {
+  const [colors, setColors] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  // Switching between styles and colours starts the phone row at the left again.
+  useEffect(() => { ref.current?.parentElement?.scrollTo({ left: 0 }); }, [colors]);
+  const keep = (e: { preventDefault(): void }) => e.preventDefault();
+  if (colors) {
+    return (
+      <div className="fmt" role="toolbar" aria-label="Colors" ref={ref}>
+        <button className="fmt-chip fmt-back" onMouseDown={keep} onClick={() => setColors(false)} aria-label="Back to styles">
+          <Icon name="chevronLeft" size={16} />
+        </button>
         {TEXT_COLORS.map((c) => (
-          <button key={c.value} className="color-btn" disabled={disabled} title={`${c.name} text`} aria-label={`${c.name} text`} onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("text", c.value)}>
+          <button key={c.value} className="fmt-swatch" disabled={disabled} title={`${c.name} text`} aria-label={`${c.name} text`} onMouseDown={keep} onClick={() => run((e) => e.color("text", c.value))}>
             <span className="color-swatch-a" style={{ color: c.value }}>A</span>
           </button>
         ))}
-        <button className="color-btn" disabled={disabled} title="Remove text color" aria-label="Remove text color" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("text", null)}>
+        <button className="fmt-swatch" disabled={disabled} title="Remove text color" aria-label="Remove text color" onMouseDown={keep} onClick={() => run((e) => e.color("text", null))}>
           <span className="color-swatch-clear">A</span>
         </button>
-      </div>
-      <div className="color-row" role="group" aria-label="Highlight color">
-        <span className="w-muted w-small">Highlight</span>
+        <span className="fmt-sep" aria-hidden />
         {HIGHLIGHT_COLORS.map((c) => (
-          <button key={c.value} className="color-btn" disabled={disabled} title={`${c.name} highlight`} aria-label={`${c.name} highlight`} onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("highlight", c.emoji)}>
+          <button key={c.value} className="fmt-swatch" disabled={disabled} title={`${c.name} highlight`} aria-label={`${c.name} highlight`} onMouseDown={keep} onClick={() => run((e) => e.color("highlight", c.emoji))}>
             <span className="color-swatch" style={{ background: c.value }} />
           </button>
         ))}
-        <button className="color-btn" disabled={disabled} title="Remove highlight" aria-label="Remove highlight" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("highlight", null)}>
+        <button className="fmt-swatch" disabled={disabled} title="Remove highlight" aria-label="Remove highlight" onMouseDown={keep} onClick={() => run((e) => e.color("highlight", null))}>
           <span className="color-swatch color-swatch-none" />
         </button>
       </div>
-      <p className="w-muted w-small color-hint">Select some text first.</p>
+    );
+  }
+  return (
+    <div className="fmt" role="toolbar" aria-label="Format" ref={ref}>
+      {STYLES.map((s) => (
+        <button key={s.label} className={`fmt-chip ${s.cls}`} disabled={disabled} title={s.hint} onMouseDown={keep} onClick={() => run(s.apply)}>
+          {s.label}
+        </button>
+      ))}
+      <button className="fmt-chip" disabled={disabled} onMouseDown={keep} onClick={() => setColors(true)}>
+        <span className="fmt-rainbow" aria-hidden /> Color
+      </button>
+      <span className="fmt-sep" aria-hidden />
+      {view.map((v) => (
+        <button key={v.label} className="fmt-chip fmt-view" aria-pressed={v.on} disabled={v.disabled} title={v.hint} onMouseDown={keep} onClick={v.onClick}>
+          {v.label}
+        </button>
+      ))}
     </div>
   );
 }
