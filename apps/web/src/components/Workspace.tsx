@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BLANK_DRAWING, HIGHLIGHT_COLORS, TEXT_COLORS, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
-import { WORKSPACE_PATH, REMINDERS_PATH, formatCards, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type QuizQuestion, type Vault, type VaultRecord } from "@writalin/vault";
-import { basename, extname, isMarkdown, noteName, type Flashcard, type VaultPath } from "@writalin/shared";
+import { WORKSPACE_PATH, REMINDERS_PATH, formatCards, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type CardScope, type QuizQuestion, type Vault, type VaultRecord } from "@writalin/vault";
+import { basename, extname, isMarkdown, noteName, type CardRating, type Flashcard, type VaultPath } from "@writalin/shared";
 import {
   ActionGrid, applyTheme, BottomBar, CommandPalette, findTheme, FocusTimer, Icon, toast, useFocusTimer,
   type BarItem, type Command, type GridAction, type IconName, type Theme,
@@ -245,19 +245,21 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     toast(`Added to “${noteName(layout.note ?? "")}”.`);
   }, [layout.note]);
 
-  const studyDue = useCallback(() => {
-    const cards = vault.dueCards();
-    if (cards.length) setStudy({ cards, title: "Due today" });
+  const studyDue = useCallback((scope: CardScope = {}) => {
+    const cards = vault.studyQueue(scope);
+    const title = scope.tag ? `#${scope.tag}` : scope.folder ? scope.folder : "Due today";
+    if (cards.length) setStudy({ cards, title });
+    else if (vault.dueCards(undefined, scope).length) toast("You've reached today's limit. The rest are waiting for tomorrow.");
     else toast("Nothing due. Every card is scheduled for later.");
   }, [vault]);
 
   /** Save a review's next due date beside the card. Cards made by AI and not added to a note only count. */
   const reviewCard = useCallback(
-    async (c: StudyCard | Flashcard, gotIt: boolean) => {
-      if (!("path" in c)) return vault.recordStudy({ cards: 1 });
+    async (c: StudyCard | Flashcard, rating: CardRating) => {
+      if (!c.path) return vault.recordStudy({ cards: 1 });
       // Save any typing first, so writing the date doesn't clash with it.
       if (c.path === layout.note) await pane.current?.flush();
-      await vault.reviewCard(c, gotIt).catch(() => toast("Couldn't save when this card is due next.", { tone: "warn" }));
+      await vault.reviewCard(c as Flashcard, rating).catch(() => toast("Couldn't save when this card is due next.", { tone: "warn" }));
     },
     [vault, layout.note],
   );
@@ -411,7 +413,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       { id: "timer-start", title: "Start focus timer", description: `${settings.timerMinutes} minutes, then a ${settings.breakMinutes}-minute break`, icon: "play", group: "Focus", keywords: "pomodoro", run: () => timer.dispatch({ type: "start" }) },
       { id: "timer-pause", title: "Pause focus timer", description: "Pick it up again whenever", icon: "pause", group: "Focus", run: () => timer.dispatch({ type: "pause" }) },
       { id: "timer-reset", title: "Stop focus timer", description: "Reset to the start", icon: "reset", group: "Focus", run: () => timer.dispatch({ type: "reset" }) },
-      { id: "study-due", title: "Review due flashcards", description: (() => { const n = vault.dueCards().length; return n ? `${n} card${n === 1 ? "" : "s"} due today` : "Nothing due right now"; })(), icon: "play", group: "Study", keywords: "flashcards review spaced repetition due today", run: studyDue },
+      { id: "study-due", title: "Review due flashcards", description: (() => { const n = vault.studyQueue().length; return n ? `${n} card${n === 1 ? "" : "s"} to review today` : "Nothing due right now"; })(), icon: "play", group: "Study", keywords: "flashcards review spaced repetition due today", run: () => studyDue() },
       { id: "study-all", title: "Study all flashcards", description: "Every Question :: Answer card in the vault", icon: "play", group: "Study", keywords: "flashcards review quiz cards", run: () => { const cards = [...vault.notes.values()].flatMap((n) => n.flashcards); if (cards.length) setStudy({ cards, title: "All flashcards" }); else toast("No flashcards yet. Write Question :: Answer on a line, or ask the AI to make some."); } },
       { id: "ai", title: "AI study helper", description: "Explain, summarize, flashcards, quiz, next steps", icon: "sparkle", group: "AI", keywords: "explain summarize flashcards quiz steps where was i", run: () => { goZone("note"); setTimeout(() => setDockOpen("ai"), 60); } },
       { id: "print", title: printLayout ? "Hide page breaks" : "Show page breaks", description: "See where A4 pages end when printed", icon: "printer", group: "View", keywords: "print layout", run: () => setPrintLayout((p) => !p) },
@@ -860,7 +862,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         {zone === "note" && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
       </div>
 
-      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} onReview={(c, gotIt) => void reviewCard(c, gotIt)} />}
+      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} onReview={(c, rating) => void reviewCard(c, rating)} />}
       {quiz && (
         <QuizPlay
           questions={quiz.questions}

@@ -9,15 +9,16 @@ export interface DayActivity {
   words: number;
   /** Number of saves. */
   edits: number;
-  /** Flashcards reviewed. */
+  /** Flashcards reviewed, and how many of them were new. */
   cards?: number;
+  newCards?: number;
   /** Quizzes finished, and their right answers out of questions. */
   quizzes?: number;
   quizRight?: number;
   quizTotal?: number;
 }
 
-const COUNTS = ["words", "edits", "cards", "quizzes", "quizRight", "quizTotal"] as const;
+const COUNTS = ["words", "edits", "cards", "newCards", "quizzes", "quizRight", "quizTotal"] as const;
 
 export interface ActivityLog {
   version: 1;

@@ -11,6 +11,10 @@ import {
   parseFlashcards,
   parseQuiz,
   nextSchedule,
+  scheduleOptions,
+  easeToDifficulty,
+  difficultyToEase,
+  formatInterval,
   setCardSchedule,
   isDue,
   cardsFromText,
@@ -229,10 +233,33 @@ describe("flashcard scheduling", () => {
     expect(isDue(a!, "2026-10-21")).toBe(false);
     expect(isDue(parseFlashcards("x :: y", "f.md")[0]!)).toBe(true);
   });
+  it("schedules a new card with FSRS's first-review stabilities", () => {
+    expect(scheduleOptions(undefined, day).map((s) => s.interval)).toEqual([1, 1, 4, 14]);
+    expect(nextSchedule(undefined, 3, day)).toEqual({ due: "2026-10-24", interval: 4, ease: 248 });
+    // Easy makes a card easier than Good, Again harder.
+    expect(nextSchedule(undefined, 4, day).ease).toBeGreaterThan(248);
+    expect(nextSchedule(undefined, 1, day).ease).toBeLessThan(248);
+  });
   it("stretches the gap when known and shrinks it when missed", () => {
-    expect(nextSchedule(undefined, true, day)).toEqual({ due: "2026-10-23", interval: 3, ease: 250 });
-    expect(nextSchedule({ due: "2026-10-20", interval: 4, ease: 250 }, true, day).interval).toBe(10);
-    expect(nextSchedule({ due: "2026-10-20", interval: 10, ease: 140 }, false, day)).toEqual({ due: "2026-10-21", interval: 1, ease: 130 });
+    const onTime = { due: "2026-10-20", interval: 10, ease: 250 };
+    const [again, hard, good, easy] = scheduleOptions(onTime, day).map((s) => s.interval);
+    expect(again).toBeLessThan(10);
+    expect(hard).toBeGreaterThanOrEqual(10);
+    expect(good).toBeGreaterThan(hard!);
+    expect(easy).toBeGreaterThan(good!);
+    // A card remembered after a longer wait than planned was learned better.
+    const late = { due: "2026-10-10", interval: 10, ease: 250 };
+    expect(nextSchedule(late, 3, day).interval).toBeGreaterThan(good!);
+    expect(nextSchedule(onTime, 1, day).ease).toBeLessThan(250);
+  });
+  it("reads the plugin's SM-2 ease as FSRS difficulty and back", () => {
+    expect(easeToDifficulty(130)).toBe(10);
+    expect(easeToDifficulty(350)).toBe(1);
+    expect(easeToDifficulty(500)).toBe(1);
+    expect(difficultyToEase(easeToDifficulty(250))).toBe(250);
+  });
+  it("labels gaps briefly", () => {
+    expect([1, 29, 60, 365, 548].map(formatInterval)).toEqual(["1d", "29d", "2mo", "1y", "1.5y"]);
   });
   it("writes the note at the end of a one-line card, keeping the other side", () => {
     const text = "# T\nA :: B\nSun ::: Star <!--SR:!2026-10-22,3,250!2026-10-30,10,270-->";

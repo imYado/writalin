@@ -57,11 +57,14 @@ export interface Task {
 export interface CardSchedule {
   /** YYYY-MM-DD. */
   due: string;
-  /** Days between reviews. */
+  /** Days between reviews; also the card's FSRS stability. */
   interval: number;
-  /** 130 and up; 250 for a new card. */
+  /** 130 (hardest) to 350 (easiest), the card's FSRS difficulty on the Spaced Repetition plugin's ease scale. */
   ease: number;
 }
+
+/** How a review went: Again, Hard, Good or Easy. */
+export type CardRating = 1 | 2 | 3 | 4;
 
 export interface Flashcard {
   path: VaultPath;

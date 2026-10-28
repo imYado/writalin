@@ -81,6 +81,20 @@ export function SettingsModal({ vault, vaultId, account, customThemes, onClose, 
         </div>
       </section>
       <section className="settings-section">
+        <h3>Flashcards</h3>
+        <div className="w-row">
+          <label className="w-field">
+            <span>New cards a day</span>
+            <input type="number" min={0} max={9999} value={s.newCardsPerDay} onChange={(e) => e.target.value !== "" && Number(e.target.value) >= 0 && set("newCardsPerDay", Math.round(Number(e.target.value)))} />
+          </label>
+          <label className="w-field">
+            <span>Reviews a day</span>
+            <input type="number" min={0} max={9999} value={s.reviewsPerDay} onChange={(e) => e.target.value !== "" && Number(e.target.value) >= 0 && set("reviewsPerDay", Math.round(Number(e.target.value)))} />
+          </label>
+        </div>
+        <p className="w-muted w-small">Cards are scheduled with FSRS, aiming for you to remember 90% of them when they come back. Lower limits keep each day short.</p>
+      </section>
+      <section className="settings-section">
         <h3>Notes</h3>
         <div className="w-row">
           <label className="w-field">

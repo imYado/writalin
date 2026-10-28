@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { VaultRecord, Vault } from "@writalin/vault";
+import type { CardScope, VaultRecord, Vault } from "@writalin/vault";
 import { isSystemNote, studyStats, tagMatches, taskDate, TASKS_PATH } from "@writalin/vault";
 import { basename, isHiddenPath, isMarkdown, isoDate, noteName, dirname, type VaultPath } from "@writalin/shared";
 import { Icon, toast } from "@writalin/ui";
@@ -15,8 +15,8 @@ interface Props {
   onNewNote: (folder?: string) => void;
   onDelete: (path: VaultPath) => void;
   onZone: (zone: "calendar" | "activity") => void;
-  /** Start reviewing the flashcards due today. */
-  onStudyDue: () => void;
+  /** Start reviewing today's flashcards, all of them or one tag's or folder's. */
+  onStudyDue: (scope?: CardScope) => void;
   initialTag?: string;
 }
 
@@ -43,11 +43,21 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
     if (folder != null) list = list.filter((n) => dirname(n.path) === folder);
     return list.filter((n) => !isSystemNote(n.path)).sort((a, b) => b.mtime - a.mtime).slice(0, tag || folder != null ? 200 : 12);
   }, [vault, version, tag, folder]);
+  /** "" for every card, `#tag` or `/folder` for one deck. */
+  const [deck, setDeck] = useState("");
+  const decks = useMemo(() => {
+    const withCards = [...vault.notes.values()].filter((n) => n.flashcards.length && !isSystemNote(n.path));
+    const tagSet = new Set(withCards.flatMap((n) => n.tags));
+    const folderSet = new Set(withCards.map((n) => dirname(n.path)).filter(Boolean));
+    return { tags: [...tagSet].sort(), folders: [...folderSet].sort() };
+  }, [vault, version]);
+  const scope: CardScope = deck.startsWith("#") ? { tag: deck.slice(1) } : deck.startsWith("/") ? { folder: deck.slice(1) } : {};
   const study = useMemo(() => {
     const all = [...vault.notes.values()].flatMap((n) => n.flashcards);
-    const due = vault.dueCards(today);
-    return { total: all.length, due: due.length, fresh: due.filter((c) => !c.schedule).length, ...studyStats(vault.activity) };
-  }, [vault, version, today]);
+    const queue = vault.studyQueue(scope, today);
+    const waiting = vault.dueCards(today, scope).length - queue.length;
+    return { total: all.length, due: queue.length, fresh: queue.filter((c) => !c.schedule).length, waiting, ...studyStats(vault.activity) };
+  }, [vault, version, today, deck]);
   const [allFiles, setAllFiles] = useState(false);
   /** Imported files (PDFs, images, anything that isn't a note), newest first. */
   const files = useMemo(
@@ -152,16 +162,30 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
             <aside className="home-side">
               {(study.total > 0 || study.quizzesWeek > 0) && (
                 <section className="home-section home-study">
-                  <h2>Study</h2>
+                  <h2 className="home-h2-row">
+                    Study
+                    {(decks.tags.length > 0 || decks.folders.length > 0) && (
+                      <>
+                        <label className="w-sr-only" htmlFor="study-deck">Cards to study</label>
+                        <select id="study-deck" className="w-input home-study-deck" value={deck} onChange={(e) => setDeck(e.target.value)}>
+                          <option value="">All cards</option>
+                          {decks.tags.length > 0 && <optgroup label="Tags">{decks.tags.map((t) => <option key={t} value={`#${t}`}>#{t}</option>)}</optgroup>}
+                          {decks.folders.length > 0 && <optgroup label="Folders">{decks.folders.map((f) => <option key={f} value={`/${f}`}>{f}</option>)}</optgroup>}
+                        </select>
+                      </>
+                    )}
+                  </h2>
                   <div className="home-study-due">
                     <div>
-                      <strong>{study.due ? `${study.due} card${study.due === 1 ? "" : "s"} to review` : "All caught up"}</strong>
+                      <strong>{study.due ? `${study.due} card${study.due === 1 ? "" : "s"} to review` : study.waiting ? "Done for today" : "All caught up"}</strong>
                       <span className="w-muted w-small">
-                        {study.due ? (study.fresh ? `${study.fresh} new` : "Due today") : `${study.total} card${study.total === 1 ? "" : "s"} scheduled for later`}
+                        {study.due
+                          ? study.fresh ? `${study.fresh} new` : "Due today"
+                          : study.waiting ? `${study.waiting} more wait for tomorrow (daily limit)` : `${study.total} card${study.total === 1 ? "" : "s"} scheduled for later`}
                       </span>
                     </div>
                     {study.due > 0 && (
-                      <button className="w-btn w-btn-primary w-btn-small" onClick={onStudyDue}>
+                      <button className="w-btn w-btn-primary w-btn-small" onClick={() => onStudyDue(scope)}>
                         <Icon name="play" size={14} /> Review
                       </button>
                     )}
