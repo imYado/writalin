@@ -1,11 +1,12 @@
-import type { CardSchedule, Flashcard, NoteMeta, Task, VaultPath } from "@writalin/shared";
+import type { CardRating, CardSchedule, Flashcard, NoteMeta, Task, VaultPath } from "@writalin/shared";
 import { Emitter, isHiddenPath, isMarkdown, isoDate, isoDateTime, joinPath, noteName, normalizePath, sanitizeFileName, dirname, basename, stripExt } from "@writalin/shared";
 import type { FileStat, FileStore } from "./fs/types";
 import { parseNote } from "./markdown/parse";
 import { splitFrontmatter, updateFrontmatter } from "./markdown/frontmatter";
 import { rewriteWikiLinks, rewriteMarkdownLinks } from "./markdown/links";
 import { newBlockId, toggleTaskLine } from "./markdown/tasks";
-import { isDue, nextSchedule, setCardSchedule } from "./markdown/flashcards";
+import { isDue, setCardSchedule } from "./markdown/flashcards";
+import { nextSchedule } from "./markdown/fsrs";
 import { tagMatches, normalizeTag } from "./markdown/tags";
 import { SearchIndex } from "./search";
 import { ACTIVITY_PATH, addActivity, emptyActivity, mergeActivity, type ActivityLog, type DayActivity } from "./activity";
@@ -54,6 +55,12 @@ export interface Backlink {
   path: VaultPath;
   /** Line of text around the link. */
   context: string;
+}
+
+/** Which cards to study: those in notes with a tag, or in a folder and its subfolders. */
+export interface CardScope {
+  tag?: string;
+  folder?: string;
 }
 
 export class Vault {
@@ -197,7 +204,7 @@ export class Vault {
   }
 
   /** Count study work (cards reviewed, quiz scores) towards today's activity. */
-  recordStudy(delta: Pick<DayActivity, "cards" | "quizzes" | "quizRight" | "quizTotal">, date = isoDate()): void {
+  recordStudy(delta: Pick<DayActivity, "cards" | "newCards" | "quizzes" | "quizRight" | "quizTotal">, date = isoDate()): void {
     this.record(delta, date);
   }
 
@@ -492,9 +499,9 @@ export class Vault {
    * the next due date goes into the note beside the card. Reviews of the same
    * note run one after another so none is lost.
    */
-  reviewCard(card: Flashcard, gotIt: boolean): Promise<CardSchedule | null> {
+  reviewCard(card: Flashcard, rating: CardRating): Promise<CardSchedule | null> {
     const run = async () => {
-      const schedule = nextSchedule(card.schedule, gotIt);
+      const schedule = nextSchedule(card.schedule, rating);
       const { text } = await this.read(card.path);
       const next = setCardSchedule(text, card, schedule);
       if (next == null) return null;
@@ -503,14 +510,32 @@ export class Vault {
     };
     const p = this.reviews.then(run, run);
     this.reviews = p.catch(() => null);
-    this.recordStudy({ cards: 1 });
+    this.recordStudy(card.schedule ? { cards: 1 } : { cards: 1, newCards: 1 });
     return p;
   }
   private reviews: Promise<unknown> = Promise.resolve();
 
-  /** Cards due for review today (or never reviewed), across the vault. */
-  dueCards(today = isoDate()): Flashcard[] {
-    return [...this.notes.values()].flatMap((n) => n.flashcards).filter((c) => isDue(c, today));
+  /** Cards due for review today (or never reviewed), across the vault or in one tag or folder. */
+  dueCards(today = isoDate(), scope: CardScope = {}): Flashcard[] {
+    const { tag, folder } = scope;
+    return [...this.notes.values()]
+      .filter((n) => (!tag || n.tags.some((t) => tagMatches(t, tag))) && (!folder || n.path.startsWith(`${folder}/`)))
+      .flatMap((n) => n.flashcards)
+      .filter((c) => isDue(c, today));
+  }
+
+  /**
+   * Today's review session: overdue cards first, then new ones, within the
+   * daily limits in settings less what was already studied today.
+   */
+  studyQueue(scope: CardScope = {}, today = isoDate()): Flashcard[] {
+    const day = this.activity.days[today];
+    const newDone = day?.newCards ?? 0;
+    const reviewsLeft = Math.max(0, this.settings.reviewsPerDay - ((day?.cards ?? 0) - newDone));
+    const newLeft = Math.max(0, this.settings.newCardsPerDay - newDone);
+    const due = this.dueCards(today, scope);
+    const reviews = due.filter((c) => c.schedule).sort((a, b) => a.schedule!.due.localeCompare(b.schedule!.due));
+    return [...reviews.slice(0, reviewsLeft), ...due.filter((c) => !c.schedule).slice(0, newLeft)];
   }
 
   /** Check or uncheck a task in its note. Fails safely if the line moved. */

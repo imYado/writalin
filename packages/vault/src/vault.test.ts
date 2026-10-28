@@ -141,6 +141,34 @@ describe("Vault", () => {
   });
 });
 
+describe("flashcard reviews", () => {
+  it("writes the next due date beside the card and counts new cards", async () => {
+    const { vault } = await makeVault({ "Bio.md": "ATP :: Energy currency\n" });
+    const card = vault.notes.get("Bio.md")!.flashcards[0]!;
+    const schedule = await vault.reviewCard(card, 3);
+    expect(schedule!.interval).toBe(4);
+    expect((await vault.read("Bio.md")).text).toBe(`ATP :: Energy currency <!--SR:!${schedule!.due},4,248-->\n`);
+    const today = vault.activity.days[Object.keys(vault.activity.days)[0]!]!;
+    expect(today).toMatchObject({ cards: 1, newCards: 1 });
+  });
+
+  it("builds today's queue by deck, overdue first, within the daily limits", async () => {
+    const { vault } = await makeVault({
+      "bio/Cells.md": "#bio\nA :: 1\nB :: 2\nC :: 3 <!--SR:!2026-10-02,5,250-->\nD :: 4 <!--SR:!2026-09-01,5,250-->\nE :: 5 <!--SR:!2099-01-01,5,250-->",
+      "History.md": "F :: 6",
+    });
+    const today = "2026-10-20";
+    expect(vault.studyQueue({}, today).map((c) => c.question)).toEqual(["D", "C", "A", "B", "F"]);
+    expect(vault.studyQueue({ tag: "bio" }, today)).toHaveLength(4);
+    expect(vault.studyQueue({ folder: "bio" }, today)).toHaveLength(4);
+    await vault.saveSettings({ newCardsPerDay: 1, reviewsPerDay: 1 });
+    expect(vault.studyQueue({}, today).map((c) => c.question)).toEqual(["D", "A"]);
+    vault.recordStudy({ cards: 2, newCards: 1 }, today);
+    expect(vault.studyQueue({}, today)).toEqual([]);
+    expect(vault.dueCards(today)).toHaveLength(5);
+  });
+});
+
 describe("writeBody", () => {
   it("keeps frontmatter changed elsewhere in the app and bumps updated", async () => {
     const { vault } = await makeVault({ "N.md": "---\ncreated: 2026-01-01T00:00\n---\nold" });

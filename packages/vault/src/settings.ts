@@ -11,6 +11,10 @@ export interface VaultSettings {
   attachmentsFolder: string;
   showPrintLayout: boolean;
   aiEnabled: boolean;
+  /** Most never-reviewed flashcards to start in a day. */
+  newCardsPerDay: number;
+  /** Most reviews of scheduled flashcards in a day. */
+  reviewsPerDay: number;
 }
 
 export const DEFAULT_SETTINGS: VaultSettings = {
@@ -23,6 +27,8 @@ export const DEFAULT_SETTINGS: VaultSettings = {
   attachmentsFolder: "attachments",
   showPrintLayout: false,
   aiEnabled: false,
+  newCardsPerDay: 20,
+  reviewsPerDay: 200,
 };
 
 export const SETTINGS_PATH = ".writalin/settings.json";

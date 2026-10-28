@@ -1,5 +1,5 @@
 import type { CardSchedule, Flashcard, VaultPath } from "@writalin/shared";
-import { addDays, isoDate } from "@writalin/shared";
+import { isoDate } from "@writalin/shared";
 import { codeRanges, inRanges } from "./code";
 
 /**
@@ -72,20 +72,6 @@ const writeSchedules = (s: (CardSchedule | undefined)[]) => {
   // A side never reviewed still needs a slot, so the other side stays second.
   return `<!--SR:${s.map((x) => x ?? fresh()).map((x) => `!${x.due},${x.interval},${x.ease}`).join("")}-->`;
 };
-
-/**
- * The next schedule after a review, like the Spaced Repetition plugin:
- * knowing a card stretches the gap by its ease; missing it shrinks the gap and
- * makes the card a little harder.
- */
-export function nextSchedule(prev: CardSchedule | undefined, gotIt: boolean, today = new Date()): CardSchedule {
-  const interval = prev && prev.interval > 0 ? prev.interval : 1;
-  const ease = prev?.ease ?? 250;
-  const next = gotIt
-    ? { interval: Math.max(1, Math.round(interval * (ease / 100))), ease }
-    : { interval: 1, ease: Math.max(130, ease - 20) };
-  return { due: isoDate(addDays(today, next.interval)), ...next };
-}
 
 /** A card is due on its date, or straight away if it was never reviewed. */
 export function isDue(card: Flashcard, today = isoDate()): boolean {

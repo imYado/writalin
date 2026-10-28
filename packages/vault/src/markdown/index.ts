@@ -5,6 +5,7 @@ export * from "./tags";
 export * from "./headings";
 export * from "./tasks";
 export * from "./flashcards";
+export * from "./fsrs";
 export * from "./blocks";
 export * from "./parse";
 export * from "./quiz";
