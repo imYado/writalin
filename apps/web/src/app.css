@@ -320,10 +320,6 @@
 .study-actions { display: flex; gap: 8px; justify-content: center; }
 .study-actions kbd { margin-left: 6px; }
 .study-again { color: var(--w-danger); }
-.study-ratings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.study-rate { flex-direction: column; gap: 2px; padding-inline: 6px; min-width: 0; border-radius: 16px; }
-.study-rate small { font-size: 11.5px; opacity: 0.75; }
-@media (max-width: 480px) { .study-rate kbd { display: none; } }
 .study-count { margin: 0; text-align: center; }
 .study-done { text-align: center; padding: 24px 0; }
 .study-done h3 { margin: 0 0 6px; }

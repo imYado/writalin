@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BLANK_DRAWING, HIGHLIGHT_COLORS, TEXT_COLORS, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
 import { WORKSPACE_PATH, REMINDERS_PATH, formatCards, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type CardScope, type QuizQuestion, type Vault, type VaultRecord } from "@writalin/vault";
-import { basename, extname, isMarkdown, noteName, type CardRating, type Flashcard, type VaultPath } from "@writalin/shared";
+import { basename, extname, isMarkdown, noteName, type Flashcard, type VaultPath } from "@writalin/shared";
 import {
   ActionGrid, applyTheme, BottomBar, CommandPalette, findTheme, FocusTimer, Icon, toast, useFocusTimer,
   type BarItem, type Command, type GridAction, type IconName, type Theme,
@@ -255,11 +255,11 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
 
   /** Save a review's next due date beside the card. Cards made by AI and not added to a note only count. */
   const reviewCard = useCallback(
-    async (c: StudyCard | Flashcard, rating: CardRating) => {
-      if (!c.path) return vault.recordStudy({ cards: 1 });
+    async (c: StudyCard | Flashcard, gotIt: boolean) => {
+      if (!("path" in c)) return vault.recordStudy({ cards: 1 });
       // Save any typing first, so writing the date doesn't clash with it.
       if (c.path === layout.note) await pane.current?.flush();
-      await vault.reviewCard(c as Flashcard, rating).catch(() => toast("Couldn't save when this card is due next.", { tone: "warn" }));
+      await vault.reviewCard(c, gotIt ? 3 : 1).catch(() => toast("Couldn't save when this card is due next.", { tone: "warn" }));
     },
     [vault, layout.note],
   );
@@ -862,7 +862,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         {zone === "note" && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
       </div>
 
-      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} onReview={(c, rating) => void reviewCard(c, rating)} />}
+      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} onReview={(c, gotIt) => void reviewCard(c, gotIt)} />}
       {quiz && (
         <QuizPlay
           questions={quiz.questions}
