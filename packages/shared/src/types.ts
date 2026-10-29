@@ -71,8 +71,14 @@ export interface Flashcard {
   line: number;
   question: string;
   answer: string;
-  /** 0 for the card as written, 1 for the reversed side of a `:::` or `??` card. */
-  side?: 0 | 1;
+  /**
+   * Which of its line's cards this is, matching the order of the line's review note:
+   * 0 for the card as written, 1 for the reversed side of a `:::` or `??` card,
+   * or the blank's place on a cloze line.
+   */
+  side?: number;
+  /** A fill-in-the-blank card from `{{…}}`. */
+  cloze?: boolean;
   /** Undefined for a card that has never been reviewed. */
   schedule?: CardSchedule;
 }

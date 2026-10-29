@@ -264,6 +264,32 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     [vault, layout.note],
   );
 
+  /** Images in flashcards, as object URLs kept for as long as the vault is open. */
+  const cardImages = useRef(new Map<string, Promise<string | null>>());
+  useEffect(() => {
+    const urls = cardImages.current;
+    return () => {
+      for (const u of urls.values()) void u.then((x) => x && URL.revokeObjectURL(x));
+      urls.clear();
+    };
+  }, [vault]);
+  const resolveCardImage = useCallback(
+    (target: string, fromPath: string | undefined) => {
+      const path = vault.files.has(target) ? target : vault.resolve(target, fromPath ?? layout.note ?? "");
+      if (!path || !/\.(png|jpe?g|gif|webp|svg|avif|bmp)$/i.test(path)) return Promise.resolve(null);
+      let url = cardImages.current.get(path);
+      if (!url) {
+        url = vault.store.readBinary(path).then(
+          (blob) => URL.createObjectURL(/\.svg$/i.test(path) && blob.type !== "image/svg+xml" ? new Blob([blob], { type: "image/svg+xml" }) : blob),
+          () => null,
+        );
+        cardImages.current.set(path, url);
+      }
+      return url;
+    },
+    [vault, layout.note],
+  );
+
   const addCardsToNote = useCallback(
     (cards: StudyCard[]) => {
       if (!pane.current?.editor?.view) {
@@ -862,7 +888,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         {zone === "note" && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
       </div>
 
-      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} onReview={(c, gotIt) => void reviewCard(c, gotIt)} />}
+      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} onReview={(c, gotIt) => void reviewCard(c, gotIt)} resolveImage={resolveCardImage} />}
       {quiz && (
         <QuizPlay
           questions={quiz.questions}

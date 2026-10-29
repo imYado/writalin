@@ -11,7 +11,7 @@ import { livePreview, linkClicks } from "./livePreview";
 import { writalinCompletions } from "./completions";
 import { headingFolding } from "./folding";
 import { focusCompartment, focusModeExtension } from "./focusMode";
-import { exitInlineMark, toggleWrap } from "./commands";
+import { exitInlineMark, makeCloze, toggleWrap } from "./commands";
 import { editorHost, type EditorHost } from "./host";
 import { printLayout, printCompartment } from "./printLayout";
 import { tables } from "./tables";
@@ -40,6 +40,7 @@ const formatKeys = keymap.of([
   { key: "Mod-Shift-h", run: (v) => toggleWrap(v, "==") },
   { key: "Mod-e", run: (v) => toggleWrap(v, "`") },
   { key: "Mod-Shift-x", run: (v) => toggleWrap(v, "~~") },
+  { key: "Mod-Alt-c", run: makeCloze },
 ]);
 
 export interface WritalinEditorOptions {

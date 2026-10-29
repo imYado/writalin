@@ -30,6 +30,30 @@ export function toggleWrap(view: EditorView, marker: string): boolean {
   return true;
 }
 
+/**
+ * Turn each selection into a cloze blank, `{{cN::selection}}`, numbered after the
+ * line's other blanks so each becomes its own card. With nothing selected, an
+ * empty blank goes in with the cursor inside.
+ */
+export function makeCloze(view: EditorView): boolean {
+  const { state } = view;
+  const tr = state.changeByRange((range) => {
+    const line = state.doc.lineAt(range.from);
+    const used = [...line.text.matchAll(/\{\{c(\d+)::/g)].map((m) => Number(m[1]));
+    const open = `{{c${Math.max(0, ...used) + 1}::`;
+    return {
+      changes: [
+        { from: range.from, insert: open },
+        { from: range.to, insert: "}}" },
+      ],
+      range: EditorSelection.range(range.from + open.length, range.to + open.length),
+    };
+  });
+  view.dispatch(state.update(tr, { scrollIntoView: true, userEvent: "input.format" }));
+  view.focus();
+  return true;
+}
+
 const PREFIX_RE = /^(\s*)(#{1,6} |> \[![\w-]+\][^\n]*|> |[-*+] \[[ xX]\] |[-*+] |\d+[.)] )?/;
 
 /** Set (or toggle off) a line prefix such as `# `, `- [ ] `, `> ` on every selected line. */

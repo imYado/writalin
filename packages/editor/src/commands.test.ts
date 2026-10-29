@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { EditorState, EditorSelection } from "@codemirror/state";
-import { exitInlineMark, setColor, setHighlight } from "./commands";
+import { exitInlineMark, makeCloze, setColor, setHighlight } from "./commands";
 
 /** A minimal stand-in for EditorView: enough for commands that only read state and dispatch. */
 function fakeView(doc: string, anchor: number, head = anchor) {
@@ -80,5 +80,17 @@ describe("setHighlight", () => {
     setColor(v as never, "text", "#e03131");
     setHighlight(v as never, "🟣");
     expect(v.state.doc.toString()).toBe('**<span style="color:#e03131">==🟣 word==</span>**');
+  });
+});
+
+describe("makeCloze", () => {
+  it("wraps the selection in the line's next numbered blank", () => {
+    const v = fakeView("The {{c1::heart}} pumps blood", 24, 29);
+    makeCloze(v as never);
+    expect(v.state.doc.toString()).toBe("The {{c1::heart}} pumps {{c2::blood}}");
+    const empty = fakeView("Born in ", 8);
+    makeCloze(empty as never);
+    expect(empty.state.doc.toString()).toBe("Born in {{c1::}}");
+    expect(empty.state.selection.main.head).toBe(14);
   });
 });

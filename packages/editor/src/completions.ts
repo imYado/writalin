@@ -35,6 +35,7 @@ export const SLASH_ITEMS: SlashItem[] = [
   { label: "Code block", detail: "Monospaced code", insert: "```\n|\n```", block: true, keywords: "pre snippet" },
   { label: "Divider", detail: "Horizontal line", insert: "---\n|", block: true, keywords: "hr rule line" },
   { label: "Flashcard", detail: "Question :: Answer for studying", insert: "| :: Answer", block: true, keywords: "card question answer study spaced repetition" },
+  { label: "Cloze card", detail: "A sentence with {{hidden words}} to fill in", insert: "The {{c1::|}} is …", block: true, keywords: "cloze fill in the blank gap card study flashcard" },
   { label: "Link to note", detail: "Connect to another note", insert: "[[|]]", keywords: "wiki page" },
   { label: "Highlight", detail: "Mark important text", insert: "==|==", keywords: "marker" },
   { label: "Math", detail: "LaTeX equation block", insert: "$$\n|\n$$", block: true, keywords: "equation latex formula" },

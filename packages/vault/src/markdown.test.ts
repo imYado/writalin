@@ -16,6 +16,7 @@ import {
   difficultyToEase,
   formatInterval,
   setCardSchedule,
+  matchClozeLine,
   isDue,
   cardsFromText,
   formatCards,
@@ -277,6 +278,35 @@ describe("flashcard scheduling", () => {
     const [again] = parseFlashcards(once, "f.md");
     expect(again).toMatchObject({ answer: "Makes energy", schedule: { interval: 3 } });
     expect(setCardSchedule(once, again!, { due: "2026-11-01", interval: 8, ease: 250 })).toBe("What does it do?\n?\nMakes energy\n<!--SR:!2026-11-01,8,250-->\n\nnext");
+  });
+  it("makes a card per cloze blank, or per number", () => {
+    expect(matchClozeLine("- The {{heart}} pumps {{blood}}")).toEqual([
+      { question: "The [...] pumps blood", answer: "The **heart** pumps blood" },
+      { question: "The heart pumps [...]", answer: "The heart pumps **blood**" },
+    ]);
+    expect(matchClozeLine("{{c1::Paris}} is the capital of {{c2::France::country}}, and {{c1::Paris}} is big")!.map((c) => c.question)).toEqual([
+      "[...] is the capital of France, and [...] is big",
+      "Paris is the capital of [country], and Paris is big",
+    ]);
+    expect(matchClozeLine("No blanks here")).toBeNull();
+    // `{{c1::…}}` has `::` but isn't a Question :: Answer card.
+    const cards = parseFlashcards("A {{c1::cell}} is the unit of {{c2::life}}\n`{{ not }}` a card", "f.md");
+    expect(cards.map((c) => [c.side, c.cloze, c.question])).toEqual([[0, true, "A [...] is the unit of life"], [1, true, "A cell is the unit of [...]"]]);
+  });
+  it("keeps each cloze blank's schedule in its own slot of the line's note", () => {
+    const text = "A {{c1::cell}} is the unit of {{c2::life}}";
+    const [, second] = parseFlashcards(text, "f.md");
+    const once = setCardSchedule(text, second!, { due: "2026-11-01", interval: 12, ease: 270 })!;
+    expect(once).toMatch(/^A \{\{c1::cell\}\} is the unit of \{\{c2::life\}\} <!--SR:!\d{4}-\d{2}-\d{2},1,250!2026-11-01,12,270-->$/);
+    const [first, again] = parseFlashcards(once, "f.md");
+    expect(again!.schedule).toEqual({ due: "2026-11-01", interval: 12, ease: 270 });
+    expect(setCardSchedule(once, first!, { due: "2026-11-05", interval: 9, ease: 250 })).toBe("A {{c1::cell}} is the unit of {{c2::life}} <!--SR:!2026-11-05,9,250!2026-11-01,12,270-->");
+  });
+  it("reads AI cloze lines and writes each one back once", () => {
+    const cards = cardsFromText("1. **Mitosis** makes {{c1::two}} identical cells\nWhat is ATP? :: Energy");
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toMatchObject({ question: "Mitosis makes [...] identical cells", source: "Mitosis makes {{c1::two}} identical cells" });
+    expect(formatCards([...cards, cards[0]!])).toBe("Mitosis makes {{c1::two}} identical cells\nWhat is ATP? :: Energy");
   });
   it("finds a card that moved", () => {
     const [card] = parseFlashcards("A :: B", "f.md");

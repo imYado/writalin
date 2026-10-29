@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon, toast, type IconName } from "@writalin/ui";
 import { cardsFromText, formatCards, parseQuiz, type QuizQuestion, type Vault } from "@writalin/vault";
+import { CardText } from "./CardText";
 import type { AiSourceText, WorkspaceAiSource } from "@writalin/workspaces";
 import { aiApi, ApiError, type Account, type AiState, type AiTool } from "../api";
 import { isEditAnswer, parseEdits, type AiEdit } from "../aiEdits";
@@ -509,7 +510,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
                   );
                 })() : i === convo.turns.length - 1 && cards.length ? (
                   <ul className="ai-cards" aria-label={`${cards.length} flashcards`}>
-                    {cards.map((c, k) => <li key={k}><b>{c.question}</b><span>{c.answer}</span></li>)}
+                    {cards.map((c, k) => <li key={k}><b><CardText text={c.question} /></b><CardText text={c.answer} /></li>)}
                   </ul>
                 ) : (
                   <div className={i < convo.turns.length - 1 ? "ai-result-text ai-earlier" : "ai-result-text"}>{t.a}</div>

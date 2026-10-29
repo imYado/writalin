@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "@writalin/ui";
+import { CardText } from "./CardText";
 
 export interface StudyCard {
   question: string;
   answer: string;
+  /** A fill-in-the-blank card. */
+  cloze?: boolean;
+  /** The note line an AI-made cloze card comes from. */
+  source?: string;
 }
 
 function shuffle<T>(xs: T[]): T[] {
@@ -26,12 +31,15 @@ export function FlashcardStudy<C extends StudyCard>({
   title,
   onClose,
   onReview,
+  resolveImage,
 }: {
   cards: C[];
   title: string;
   onClose: () => void;
   /** Called once per card per round, with how the first try went, so it can be scheduled. */
   onReview?: (card: C, gotIt: boolean) => void;
+  /** Shows images embedded in a card, found from the note the card is in. */
+  resolveImage?: (target: string, fromPath: string | undefined) => Promise<string | null>;
 }) {
   const [round, setRound] = useState(0);
   const initial = useMemo(() => shuffle(cards), [cards, round]);
@@ -47,6 +55,8 @@ export function FlashcardStudy<C extends StudyCard>({
   }, [initial]);
 
   const card = queue[0];
+  const from = card && "path" in card ? String(card.path) : undefined;
+  const resolve = useMemo(() => (resolveImage ? (t: string) => resolveImage(t, from) : undefined), [resolveImage, from]);
   const known = cards.length - queue.length;
   const answer = (gotIt: boolean) => {
     if (!card) return;
@@ -83,12 +93,12 @@ export function FlashcardStudy<C extends StudyCard>({
           <>
             <button className={`study-card${flipped ? " flipped" : ""}`} onClick={() => setFlipped((f) => !f)} aria-live="polite">
               <span className="study-side study-front">
-                <small>Question</small>
-                <span>{card.question}</span>
+                <small>{card.cloze ? "Fill in the blank" : "Question"}</small>
+                <CardText text={card.question} resolveImage={resolve} />
               </span>
               <span className="study-side study-back">
                 <small>Answer</small>
-                <span>{card.answer}</span>
+                <CardText text={card.answer} resolveImage={resolve} />
               </span>
             </button>
             {flipped ? (
