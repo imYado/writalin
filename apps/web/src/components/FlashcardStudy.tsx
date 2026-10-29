@@ -32,6 +32,7 @@ export function FlashcardStudy<C extends StudyCard>({
   onClose,
   onReview,
   resolveImage,
+  next,
 }: {
   cards: C[];
   title: string;
@@ -40,6 +41,8 @@ export function FlashcardStudy<C extends StudyCard>({
   onReview?: (card: C, gotIt: boolean) => void;
   /** Shows images embedded in a card, found from the note the card is in. */
   resolveImage?: (target: string, fromPath: string | undefined) => Promise<string | null>;
+  /** What to study after this round, offered when it's done. */
+  next?: { label: string; run: () => void };
 }) {
   const [round, setRound] = useState(0);
   const initial = useMemo(() => shuffle(cards), [cards, round]);
@@ -115,11 +118,18 @@ export function FlashcardStudy<C extends StudyCard>({
           </>
         ) : (
           <div className="study-done">
-            <h3>All {cards.length} cards done</h3>
+            <h3>{cards.length === 1 ? "Card done" : `All ${cards.length} cards done`}</h3>
             <p className="w-muted">{missed === 0 ? "You knew every one the first time." : `${missed} retr${missed === 1 ? "y" : "ies"} along the way.`}</p>
             <div className="study-actions">
               <button className="w-btn" onClick={() => setRound((r) => r + 1)}>Study again</button>
-              <button className="w-btn w-btn-primary" onClick={onClose}>Done</button>
+              {next ? (
+                <>
+                  <button className="w-btn" onClick={onClose}>Done</button>
+                  <button className="w-btn w-btn-primary" onClick={next.run}>{next.label}</button>
+                </>
+              ) : (
+                <button className="w-btn w-btn-primary" onClick={onClose}>Done</button>
+              )}
             </div>
           </div>
         )}

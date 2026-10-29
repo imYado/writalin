@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BLANK_DRAWING, HIGHLIGHT_COLORS, TEXT_COLORS, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
-import { WORKSPACE_PATH, REMINDERS_PATH, formatCards, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type CardScope, type QuizQuestion, type Vault, type VaultRecord } from "@writalin/vault";
+import { WORKSPACE_PATH, REMINDERS_PATH, formatCards, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type CardScope, type QuizQuestion, type WeakDeck, type Vault, type VaultRecord } from "@writalin/vault";
 import { basename, extname, isMarkdown, noteName, type Flashcard, type VaultPath } from "@writalin/shared";
 import {
   ActionGrid, applyTheme, BottomBar, CommandPalette, findTheme, FocusTimer, Icon, toast, useFocusTimer,
@@ -84,7 +84,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   /** What the open side-pane workspace (a PDF) offers the AI dock. */
   const [wsAi, setWsAi] = useState<WorkspaceAiSource | null>(null);
   const [aiFocus, setAiFocus] = useState<{ scope: string; nonce: number }>();
-  const [study, setStudy] = useState<{ cards: (StudyCard | Flashcard)[]; title: string } | null>(null);
+  /** A study round. Practice rounds count towards activity but don't move the cards' due dates. */
+  const [study, setStudy] = useState<{ cards: (StudyCard | Flashcard)[]; title: string; practice?: boolean; next?: { label: string; run: () => void } } | null>(null);
   const [quiz, setQuiz] = useState<{ questions: QuizQuestion[]; title: string } | null>(null);
   const [themeEditor, setThemeEditor] = useState(false);
   const [customThemes, setCustomThemes] = useState<Theme[]>([]);
@@ -252,6 +253,18 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     else if (vault.dueCards(undefined, scope).length) toast("You've reached today's limit. The rest are waiting for tomorrow.");
     else toast("Nothing due. Every card is scheduled for later.");
   }, [vault]);
+
+  const practise = useCallback((weak: WeakDeck) => setStudy({ cards: weak.cards, title: `Practise ${weak.label}`, practice: true }), []);
+
+  /** Today's plan in one go: start the focus timer, review what's due, then practise the weakest deck. */
+  const startStudying = useCallback(() => {
+    const plan = vault.studyPlan();
+    if (!plan.cards.length && !plan.weak) return toast("Nothing to study right now. Every card is scheduled for later.");
+    if (timer.state.phase === "idle") timer.dispatch({ type: "start" });
+    const weak = plan.weak;
+    if (!plan.cards.length) return practise(weak!);
+    setStudy({ cards: plan.cards, title: "Today", next: weak ? { label: `Practise ${weak.label}`, run: () => practise(weak) } : undefined });
+  }, [vault, timer, practise]);
 
   /** Save a review's next due date beside the card. Cards made by AI and not added to a note only count. */
   const reviewCard = useCallback(
@@ -439,6 +452,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       { id: "timer-start", title: "Start focus timer", description: `${settings.timerMinutes} minutes, then a ${settings.breakMinutes}-minute break`, icon: "play", group: "Focus", keywords: "pomodoro", run: () => timer.dispatch({ type: "start" }) },
       { id: "timer-pause", title: "Pause focus timer", description: "Pick it up again whenever", icon: "pause", group: "Focus", run: () => timer.dispatch({ type: "pause" }) },
       { id: "timer-reset", title: "Stop focus timer", description: "Reset to the start", icon: "reset", group: "Focus", run: () => timer.dispatch({ type: "reset" }) },
+      { id: "study-today", title: "Start today's studying", description: (() => { const p = vault.studyPlan(); return p.cards.length ? `${p.cards.length} card${p.cards.length === 1 ? "" : "s"}, about ${p.minutes} min, with the focus timer` : p.weak ? `Practise ${p.weak.label}` : "Nothing to study right now"; })(), icon: "play", group: "Study", keywords: "today plan study session focus flashcards practise", run: startStudying },
       { id: "study-due", title: "Review due flashcards", description: (() => { const n = vault.studyQueue().length; return n ? `${n} card${n === 1 ? "" : "s"} to review today` : "Nothing due right now"; })(), icon: "play", group: "Study", keywords: "flashcards review spaced repetition due today", run: () => studyDue() },
       { id: "study-all", title: "Study all flashcards", description: "Every Question :: Answer card in the vault", icon: "play", group: "Study", keywords: "flashcards review quiz cards", run: () => { const cards = [...vault.notes.values()].flatMap((n) => n.flashcards); if (cards.length) setStudy({ cards, title: "All flashcards" }); else toast("No flashcards yet. Write Question :: Answer on a line, or ask the AI to make some."); } },
       { id: "ai", title: "AI study helper", description: "Explain, summarize, flashcards, quiz, next steps", icon: "sparkle", group: "AI", keywords: "explain summarize flashcards quiz steps where was i", run: () => { goZone("note"); setTimeout(() => setDockOpen("ai"), 60); } },
@@ -826,6 +840,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
               onDelete={(p) => void deleteNote(p)}
               onZone={goZone}
               onStudyDue={studyDue}
+              onPractise={practise}
+              onStartStudying={startStudying}
               initialTag={homeTag}
               key={homeTag ?? ""}
             />
@@ -888,7 +904,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         {zone === "note" && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
       </div>
 
-      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} onReview={(c, gotIt) => void reviewCard(c, gotIt)} resolveImage={resolveCardImage} />}
+      {study && <FlashcardStudy cards={study.cards} title={study.title} onClose={() => setStudy(null)} onReview={(c, gotIt) => void (study.practice ? vault.recordStudy({ cards: 1 }) : reviewCard(c, gotIt))} resolveImage={resolveCardImage} next={study.next} />}
       {quiz && (
         <QuizPlay
           questions={quiz.questions}

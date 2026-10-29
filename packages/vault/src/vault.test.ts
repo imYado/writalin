@@ -169,6 +169,22 @@ describe("flashcard reviews", () => {
   });
 });
 
+describe("study plan", () => {
+  it("estimates the time and suggests the deck with the most hard cards, leaving out due ones", async () => {
+    const hard = (q: string, ease: number) => `${q} :: x <!--SR:!2099-01-01,3,${ease}-->`;
+    const { vault } = await makeVault({
+      "Bio.md": ["#bio", hard("A", 150), hard("B", 210), hard("C", 300), "New :: card", "Due :: now <!--SR:!2026-10-01,3,140-->"].join("\n"),
+      "Chem.md": ["#chem", hard("D", 140)].join("\n"),
+      "maths/Algebra.md": [hard("E", 200), hard("F", 220), hard("G", 160)].join("\n"),
+    });
+    const plan = vault.studyPlan("2026-10-20");
+    expect(plan.cards.map((c) => c.question)).toEqual(["Due", "New"]);
+    expect(plan).toMatchObject({ fresh: 1, minutes: 1 });
+    expect(plan.weak).toMatchObject({ label: "maths", scope: { folder: "maths" } });
+    expect(plan.weak!.cards.map((c) => c.question)).toEqual(["G", "E", "F"]);
+  });
+});
+
 describe("writeBody", () => {
   it("keeps frontmatter changed elsewhere in the app and bumps updated", async () => {
     const { vault } = await makeVault({ "N.md": "---\ncreated: 2026-01-01T00:00\n---\nold" });
