@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BLANK_DRAWING, HIGHLIGHT_COLORS, TEXT_COLORS, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
+import { BLANK_DRAWING, TEXT_COLORS, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
 import { WORKSPACE_PATH, REMINDERS_PATH, formatCards, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type CardScope, type QuizQuestion, type WeakDeck, type Vault, type VaultRecord } from "@writalin/vault";
 import { basename, extname, isMarkdown, noteName, type Flashcard, type VaultPath } from "@writalin/shared";
 import {
@@ -614,7 +614,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     {
       row: [
         { label: "Bold", text: <b>B</b>, onClick: () => ed()?.wrap("**") },
-        { label: "Italic", text: <i>I</i>, onClick: () => ed()?.wrap("_") },
+        { label: "Italic", text: <i>I</i>, onClick: () => ed()?.wrap("*") },
         { label: "Highlight", text: <mark>H</mark>, onClick: () => ed()?.wrap("==") },
         { label: "Strikethrough", text: <s>S</s>, onClick: () => ed()?.wrap("~~") },
         { label: "Code", text: <code>{"<>"}</code>, onClick: () => ed()?.wrap("`") },
@@ -632,14 +632,6 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       row: [
         ...TEXT_COLORS.map((c) => ({ label: `${c.name} text`, text: <span className="color-swatch-a" style={{ color: c.value }}>A</span>, onClick: () => ed()?.color("text", c.value) })),
         { label: "Remove text color", text: <span className="color-swatch-clear">A</span>, onClick: () => ed()?.color("text", null) },
-      ],
-    },
-    {
-      title: "Highlight",
-      items: [],
-      row: [
-        ...HIGHLIGHT_COLORS.map((c) => ({ label: `${c.name} highlight`, text: <span className="color-swatch" style={{ background: c.value }} />, onClick: () => ed()?.color("highlight", c.emoji) })),
-        { label: "Remove highlight", text: <span className="color-swatch color-swatch-none" />, onClick: () => ed()?.color("highlight", null) },
       ],
     },
     {
@@ -1056,7 +1048,7 @@ interface ViewChip { label: string; on?: boolean; hint?: string; disabled?: bool
 
 const STYLES: { label: string; cls: string; hint?: string; apply: (e: Editor) => void }[] = [
   { label: "Bold", cls: "fmt-bold", hint: "Ctrl+B", apply: (e) => e.wrap("**") },
-  { label: "Italic", cls: "fmt-italic", hint: "Ctrl+I", apply: (e) => e.wrap("_") },
+  { label: "Italic", cls: "fmt-italic", hint: "Ctrl+I", apply: (e) => e.wrap("*") },
   { label: "Highlight", cls: "fmt-mark", hint: "Ctrl+Shift+H", apply: (e) => e.wrap("==") },
   { label: "Strike", cls: "fmt-strike", apply: (e) => e.wrap("~~") },
   { label: "Code", cls: "fmt-code", hint: "Ctrl+E", apply: (e) => e.wrap("`") },
@@ -1093,15 +1085,6 @@ function FormatPanel({ disabled, run, view }: { disabled: boolean; run: (fn: (e:
         ))}
         <button className="fmt-swatch" disabled={disabled} title="Remove text color" aria-label="Remove text color" onMouseDown={keep} onClick={() => run((e) => e.color("text", null))}>
           <span className="color-swatch-clear">A</span>
-        </button>
-        <span className="fmt-sep" aria-hidden />
-        {HIGHLIGHT_COLORS.map((c) => (
-          <button key={c.value} className="fmt-swatch" disabled={disabled} title={`${c.name} highlight`} aria-label={`${c.name} highlight`} onMouseDown={keep} onClick={() => run((e) => e.color("highlight", c.emoji))}>
-            <span className="color-swatch" style={{ background: c.value }} />
-          </button>
-        ))}
-        <button className="fmt-swatch" disabled={disabled} title="Remove highlight" aria-label="Remove highlight" onMouseDown={keep} onClick={() => run((e) => e.color("highlight", null))}>
-          <span className="color-swatch color-swatch-none" />
         </button>
       </div>
     );
