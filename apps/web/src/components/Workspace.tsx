@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BLANK_DRAWING, TEXT_COLORS, drawingToSvg, editDrawingWhenShown, formatMediaLine, type HostAction } from "@writalin/editor";
+import { BLANK_DRAWING, drawingToSvg, editDrawingWhenShown, formatMediaLine, type EditorCommand, type HostAction } from "@writalin/editor";
 import { WORKSPACE_PATH, REMINDERS_PATH, formatCards, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type CardScope, type QuizQuestion, type WeakDeck, type Vault, type VaultRecord } from "@writalin/vault";
 import { basename, extname, isMarkdown, noteName, type Flashcard, type VaultPath } from "@writalin/shared";
 import {
@@ -381,8 +381,11 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   // ----- keyboard -----
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The editor handled it (Ctrl+K inserts a link there, as in Obsidian).
+      if (e.defaultPrevented) return;
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key.toLowerCase() === "k") {
+      // Ctrl+P and Ctrl+O like Obsidian's command palette and quick switcher; Ctrl+K too.
+      if (mod && !e.shiftKey && ["k", "p", "o"].includes(e.key.toLowerCase())) {
         e.preventDefault();
         setPaletteOpen((o) => !o);
       } else if (mod && e.key === ".") {
@@ -513,25 +516,6 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const noNote = !layout.note || layout.view !== "note";
   const bar: BarItem[] = [
     {
-      id: "tools",
-      label: "Format",
-      icon: "tools",
-      panel: (close) => (
-        <FormatPanel
-          disabled={noNote}
-          run={(fn) => { const e = ed(); if (e) fn(e); }}
-          view={[
-            { label: "Focus", on: focusMode, hint: "Ctrl+.", onClick: () => { setFocusMode((f) => !f); close(); } },
-            { label: "Outline", on: outlineOpen, onClick: () => { setOutlineOpen((o) => !o); close(); } },
-            { label: "Page breaks", on: printLayout, onClick: () => { setPrintLayout((p) => !p); close(); } },
-            { label: "Fold all", onClick: () => ed()?.foldAll(), disabled: noNote },
-            { label: "Unfold all", onClick: () => ed()?.unfoldAll(), disabled: noNote },
-            { label: "All commands", hint: "Ctrl+K", onClick: () => { close(); setPaletteOpen(true); } },
-          ]}
-        />
-      ),
-    },
-    {
       id: "ai",
       label: "AI",
       icon: "sparkle",
@@ -610,42 +594,73 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     e.replaceSelection(`[[${noteName(path)}]]`);
     toast(`Made “${noteName(path)}”. The link is where the text was.`, { action: { label: "Open", run: () => openPath(path) } });
   };
-  const selectionMenu: MenuSection[] = [
+  const run = (c: EditorCommand) => ed()?.run(c);
+  const hasSelection = () => !!ed()?.selection().trim();
+  /** Right-click in a note: Obsidian's editor menu (Format, Paragraph, Insert), plus the study helper. */
+  const editorMenu = (): MenuSection[] => [
+    ...(hasSelection()
+      ? [{
+          items: [
+            { label: "Explain with AI", icon: "sparkle" as IconName, onClick: () => askAi("explain") },
+            { label: "Summarize with AI", icon: "notes" as IconName, onClick: () => askAi("summarize") },
+            { label: "Make flashcards", icon: "copy" as IconName, onClick: () => askAi("flashcards") },
+            { label: "Extract to a new note", icon: "file" as IconName, onClick: () => void selectionToNote() },
+          ],
+        }]
+      : []),
     {
-      row: [
-        { label: "Bold", text: <b>B</b>, onClick: () => ed()?.wrap("**") },
-        { label: "Italic", text: <i>I</i>, onClick: () => ed()?.wrap("*") },
-        { label: "Highlight", text: <mark>H</mark>, onClick: () => ed()?.wrap("==") },
-        { label: "Strikethrough", text: <s>S</s>, onClick: () => ed()?.wrap("~~") },
-        { label: "Code", text: <code>{"<>"}</code>, onClick: () => ed()?.wrap("`") },
-        { label: "Link to a note", text: <Icon name="link" size={15} />, onClick: () => ed()?.linkToNote() },
-      ],
       items: [
-        { label: "Heading", icon: "list", onClick: () => ed()?.prefix("## ") },
-        { label: "Checklist", icon: "checkSquare", onClick: () => ed()?.prefix("- [ ] ") },
-        { label: "New note from this", icon: "file", onClick: () => void selectionToNote() },
+        { label: "Add link", icon: "linkMd", hint: "Ctrl K", onClick: () => run("markdownLink") },
+        { label: "Add internal link", icon: "brackets", onClick: () => run("internalLink") },
+        {
+          label: "Format", icon: "bold", submenu: [
+            { label: "Bold", icon: "bold", hint: "Ctrl B", onClick: () => run("bold") },
+            { label: "Italic", icon: "italic", hint: "Ctrl I", onClick: () => run("italic") },
+            { label: "Strikethrough", icon: "strikethrough", onClick: () => run("strikethrough") },
+            { label: "Highlight", icon: "highlighter", onClick: () => run("highlight") },
+            { label: "Code", icon: "code", onClick: () => run("code") },
+            { label: "Math", icon: "activity", onClick: () => run("math") },
+            { label: "Comment", icon: "notes", hint: "Ctrl /", onClick: () => run("comment") },
+            { label: "Clear formatting", icon: "close", onClick: () => run("clearFormatting") },
+          ],
+        },
+        {
+          label: "Paragraph", icon: "listBullet", submenu: [
+            { label: "Bullet list", icon: "listBullet", onClick: () => run("bulletList") },
+            { label: "Numbered list", icon: "listOrdered", onClick: () => run("numberedList") },
+            { label: "Task list", icon: "listChecks", onClick: () => run("checklist") },
+            { label: "Heading 1", icon: "heading", onClick: () => run("h1") },
+            { label: "Heading 2", icon: "heading", onClick: () => run("h2") },
+            { label: "Heading 3", icon: "heading", onClick: () => run("h3") },
+            { label: "Heading 4", icon: "heading", onClick: () => run("h4") },
+            { label: "Heading 5", icon: "heading", onClick: () => run("h5") },
+            { label: "Heading 6", icon: "heading", onClick: () => run("h6") },
+            { label: "Body", icon: "file", onClick: () => run("body") },
+            { label: "Quote", icon: "quote", onClick: () => run("quote") },
+          ],
+        },
+        {
+          label: "Insert", icon: "plus", submenu: [
+            { label: "Footnote", icon: "notes", onClick: () => run("footnote") },
+            { label: "Table", icon: "activity", onClick: () => run("table") },
+            { label: "Callout", icon: "bulb", onClick: () => run("callout") },
+            { label: "Horizontal rule", icon: "chevronRight", onClick: () => run("horizontalRule") },
+            { label: "Code block", icon: "code", onClick: () => run("codeBlock") },
+            { label: "Math block", icon: "activity", onClick: () => run("mathBlock") },
+          ],
+        },
       ],
     },
     {
-      title: "Text color",
-      items: [],
-      row: [
-        ...TEXT_COLORS.map((c) => ({ label: `${c.name} text`, text: <span className="color-swatch-a" style={{ color: c.value }}>A</span>, onClick: () => ed()?.color("text", c.value) })),
-        { label: "Remove text color", text: <span className="color-swatch-clear">A</span>, onClick: () => ed()?.color("text", null) },
-      ],
-    },
-    {
-      title: "Study helper",
       items: [
-        { label: "Explain", icon: "bulb", onClick: () => askAi("explain") },
-        { label: "Summarize", icon: "notes", onClick: () => askAi("summarize") },
-        { label: "Flashcards", icon: "copy", onClick: () => askAi("flashcards") },
-      ],
-    },
-    {
-      items: [
-        { label: "Copy", icon: "copy", hint: "Ctrl C", onClick: () => void navigator.clipboard?.writeText(ed()?.selection() ?? "") },
-        { label: "Cut", icon: "close", hint: "Ctrl X", onClick: () => { void navigator.clipboard?.writeText(ed()?.selection() ?? ""); ed()?.replaceSelection(""); } },
+        ...(hasSelection()
+          ? [
+              { label: "Cut", icon: "close" as IconName, hint: "Ctrl X", onClick: () => { void navigator.clipboard?.writeText(ed()?.selection() ?? ""); ed()?.replaceSelection(""); } },
+              { label: "Copy", icon: "copy" as IconName, hint: "Ctrl C", onClick: () => void navigator.clipboard?.writeText(ed()?.selection() ?? "") },
+            ]
+          : []),
+        { label: "Paste", icon: "import", hint: "Ctrl V", onClick: () => void navigator.clipboard?.readText().then((t) => t && ed()?.replaceSelection(t)) },
+        { label: "Select all", icon: "checkSquare", hint: "Ctrl A", onClick: () => { const v = ed()?.view; v?.dispatch({ selection: { anchor: 0, head: v.state.doc.length } }); v?.focus(); } },
       ],
     },
   ];
@@ -750,7 +765,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           ))}
         </div>
         <div className="rail-bottom">
-          <button className="rail-item w-glow" onClick={() => setPaletteOpen(true)} title="Commands (Ctrl+K)">
+          <button className="rail-item w-glow" onClick={() => setPaletteOpen(true)} title="Commands (Ctrl+P)">
             <Icon name="search" size={20} />
             <span>Search</span>
           </button>
@@ -812,7 +827,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             <button className="topbar-search w-glow" onClick={() => setPaletteOpen(true)} aria-label="Search and commands">
               <Icon name="search" size={15} />
               <span>Search or run a command</span>
-              <kbd>Ctrl K</kbd>
+              <kbd>Ctrl P</kbd>
             </button>
             <button className="w-icon-btn topbar-phone" onClick={() => setSettingsOpen(true)} aria-label="Settings and account" title="Settings and account">
               {account ? <span className="avatar">{account.email[0]!.toUpperCase()}</span> : <Icon name="user" />}
@@ -884,7 +899,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
                   onTag={(t) => { setHomeTag(t); setLayout((l) => ({ ...l, view: "home" })); }}
                   onMore={(r) => setMenu({ kind: "note", x: r.right - 220, y: r.bottom + 6 })}
                   onContextMenu={(e) => {
-                    if (!ed()?.selection().trim()) return; // nothing selected: the browser's own menu
+                    // Phones and tablets keep their own long-press menu, as Obsidian does.
+                    if (matchMedia("(pointer: coarse)").matches) return;
                     e.preventDefault();
                     setMenu({ kind: "selection", x: e.clientX, y: e.clientY });
                   }}
@@ -894,6 +910,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           )}
         </main>
 
+        {zone === "note" && !noNote && <EditToolbar run={run} attach={() => insertImageInput.current?.click()} hideKeyboard={() => ed()?.view?.contentDOM.blur()} />}
         {zone === "note" && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
       </div>
 
@@ -907,7 +924,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           onMakeCards={addCardsToNote}
         />
       )}
-      {menu && <PointMenu x={menu.x} y={menu.y} label={menu.kind === "note" ? "Note" : "Selected text"} sections={menu.kind === "note" ? noteMenu : selectionMenu} onClose={() => setMenu(null)} />}
+      {menu && <PointMenu x={menu.x} y={menu.y} label={menu.kind === "note" ? "Note" : "Editor"} sections={menu.kind === "note" ? noteMenu : editorMenu()} onClose={() => setMenu(null)} />}
       {paletteOpen && <CommandPalette open onClose={() => setPaletteOpen(false)} commands={commands} />}
       {settingsOpen && (
         <SettingsModal
@@ -1043,68 +1060,49 @@ function TabAdder({ vault, onTasks, onCalendar, onPdf, onScratch, onDeleteScratc
   );
 }
 
-type Editor = NonNullable<NotePaneHandle["editor"]>;
-interface ViewChip { label: string; on?: boolean; hint?: string; disabled?: boolean; onClick: () => void }
-
-const STYLES: { label: string; cls: string; hint?: string; apply: (e: Editor) => void }[] = [
-  { label: "Bold", cls: "fmt-bold", hint: "Ctrl+B", apply: (e) => e.wrap("**") },
-  { label: "Italic", cls: "fmt-italic", hint: "Ctrl+I", apply: (e) => e.wrap("*") },
-  { label: "Highlight", cls: "fmt-mark", hint: "Ctrl+Shift+H", apply: (e) => e.wrap("==") },
-  { label: "Strike", cls: "fmt-strike", apply: (e) => e.wrap("~~") },
-  { label: "Code", cls: "fmt-code", hint: "Ctrl+E", apply: (e) => e.wrap("`") },
-  { label: "Title", cls: "fmt-h1", apply: (e) => e.prefix("# ") },
-  { label: "Heading", cls: "fmt-h2", apply: (e) => e.prefix("## ") },
-  { label: "Subheading", cls: "fmt-h3", apply: (e) => e.prefix("### ") },
-  { label: "• List", cls: "", apply: (e) => e.prefix("- ") },
-  { label: "1. List", cls: "", apply: (e) => e.prefix("1. ") },
-  { label: "☐ Checklist", cls: "", apply: (e) => e.prefix("- [ ] ") },
-  { label: "❝ Quote", cls: "fmt-quote", apply: (e) => e.prefix("> ") },
+const TOOLBAR: { cmd: EditorCommand; icon: IconName; label: string }[] = [
+  { cmd: "internalLink", icon: "brackets", label: "Add internal link" },
+  { cmd: "tag", icon: "hash", label: "Add tag" },
+  { cmd: "undo", icon: "undo", label: "Undo" },
+  { cmd: "redo", icon: "redo", label: "Redo" },
+  { cmd: "bold", icon: "bold", label: "Bold" },
+  { cmd: "italic", icon: "italic", label: "Italic" },
+  { cmd: "strikethrough", icon: "strikethrough", label: "Strikethrough" },
+  { cmd: "highlight", icon: "highlighter", label: "Highlight" },
+  { cmd: "code", icon: "code", label: "Code" },
+  { cmd: "markdownLink", icon: "linkMd", label: "Add link" },
+  { cmd: "heading", icon: "heading", label: "Heading" },
+  { cmd: "checklist", icon: "listChecks", label: "Checklist" },
+  { cmd: "bulletList", icon: "listBullet", label: "Bullet list" },
+  { cmd: "numberedList", icon: "listOrdered", label: "Numbered list" },
+  { cmd: "indent", icon: "indent", label: "Indent" },
+  { cmd: "outdent", icon: "outdent", label: "Unindent" },
+  { cmd: "quote", icon: "quote", label: "Quote" },
 ];
 
 /**
- * The Format panel: each style is a small chip written in that style. Color is
- * one chip that swaps the row for the colour choices. On phones it's a single
- * row you scroll sideways, so it stays small above the keyboard.
+ * Obsidian's mobile toolbar: one row of icons right above the keyboard while
+ * you type in a note, scrolling sideways, with "hide keyboard" kept at the end.
+ * It only shows on phones and tablets (see app.css).
  */
-function FormatPanel({ disabled, run, view }: { disabled: boolean; run: (fn: (e: Editor) => void) => void; view: ViewChip[] }) {
-  const [colors, setColors] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  // Switching between styles and colours starts the phone row at the left again.
-  useEffect(() => { ref.current?.parentElement?.scrollTo({ left: 0 }); }, [colors]);
+function EditToolbar({ run, attach, hideKeyboard }: { run: (c: EditorCommand) => void; attach: () => void; hideKeyboard: () => void }) {
+  // Tapping a button mustn't take focus from the note, or the keyboard would close.
   const keep = (e: { preventDefault(): void }) => e.preventDefault();
-  if (colors) {
-    return (
-      <div className="fmt" role="toolbar" aria-label="Colors" ref={ref}>
-        <button className="fmt-chip fmt-back" onMouseDown={keep} onClick={() => setColors(false)} aria-label="Back to styles">
-          <Icon name="chevronLeft" size={16} />
-        </button>
-        {TEXT_COLORS.map((c) => (
-          <button key={c.value} className="fmt-swatch" disabled={disabled} title={`${c.name} text`} aria-label={`${c.name} text`} onMouseDown={keep} onClick={() => run((e) => e.color("text", c.value))}>
-            <span className="color-swatch-a" style={{ color: c.value }}>A</span>
+  return (
+    <div className="edit-toolbar" role="toolbar" aria-label="Editing" onPointerDown={keep} onMouseDown={keep}>
+      <div className="edit-toolbar-scroll">
+        {TOOLBAR.map((b) => (
+          <button key={b.cmd} className="edit-toolbar-btn" aria-label={b.label} title={b.label} onClick={() => run(b.cmd)}>
+            <Icon name={b.icon} size={20} />
           </button>
         ))}
-        <button className="fmt-swatch" disabled={disabled} title="Remove text color" aria-label="Remove text color" onMouseDown={keep} onClick={() => run((e) => e.color("text", null))}>
-          <span className="color-swatch-clear">A</span>
+        <button className="edit-toolbar-btn" aria-label="Attach image" title="Attach image" onClick={attach}>
+          <Icon name="paperclip" size={20} />
         </button>
       </div>
-    );
-  }
-  return (
-    <div className="fmt" role="toolbar" aria-label="Format" ref={ref}>
-      {STYLES.map((s) => (
-        <button key={s.label} className={`fmt-chip ${s.cls}`} disabled={disabled} title={s.hint} onMouseDown={keep} onClick={() => run(s.apply)}>
-          {s.label}
-        </button>
-      ))}
-      <button className="fmt-chip" disabled={disabled} onMouseDown={keep} onClick={() => setColors(true)}>
-        <span className="fmt-rainbow" aria-hidden /> Color
+      <button className="edit-toolbar-btn edit-toolbar-hide" aria-label="Hide keyboard" title="Hide keyboard" onClick={hideKeyboard}>
+        <Icon name="keyboardDown" size={20} />
       </button>
-      <span className="fmt-sep" aria-hidden />
-      {view.map((v) => (
-        <button key={v.label} className="fmt-chip fmt-view" aria-pressed={v.on} disabled={v.disabled} title={v.hint} onMouseDown={keep} onClick={v.onClick}>
-          {v.label}
-        </button>
-      ))}
     </div>
   );
 }

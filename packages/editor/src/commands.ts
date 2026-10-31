@@ -90,7 +90,15 @@ export function toggleWrap(view: EditorView, marker: string): boolean {
         if (host) {
           changes.push({ from: host.from, to: host.innerFrom }, { from: host.innerTo, to: host.to });
         } else {
-          // Put the cursor between the marks.
+          // Like Obsidian: the cursor in a word styles the whole word…
+          const word = state.wordAt(a);
+          if (word && kind !== "code") {
+            return {
+              changes: [{ from: word.from, insert: write }, { from: word.to, insert: write }],
+              range: EditorSelection.cursor(a + write.length),
+            };
+          }
+          // …and anywhere else it puts empty marks with the cursor between them.
           return { changes: { from: a, insert: write + write }, range: EditorSelection.cursor(a + write.length) };
         }
         continue;
