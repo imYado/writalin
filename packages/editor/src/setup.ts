@@ -36,7 +36,7 @@ const highlight = HighlightStyle.define([
 
 const formatKeys = keymap.of([
   { key: "Mod-b", run: (v) => toggleWrap(v, "**") },
-  { key: "Mod-i", run: (v) => toggleWrap(v, "_") },
+  { key: "Mod-i", run: (v) => toggleWrap(v, "*") },
   { key: "Mod-Shift-h", run: (v) => toggleWrap(v, "==") },
   { key: "Mod-e", run: (v) => toggleWrap(v, "`") },
   { key: "Mod-Shift-x", run: (v) => toggleWrap(v, "~~") },
