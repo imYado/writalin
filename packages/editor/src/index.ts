@@ -10,3 +10,4 @@ export { headingFoldRange } from "./folding";
 export { parseTable, serializeTable, splitRow, type TableModel } from "./tables";
 export { BLANK_DRAWING, drawingToSvg, editDrawingWhenShown, forgetMediaUrl, formatMediaLine, isDrawing, parseMediaLine, svgToDrawing, type DrawingModel, type MediaLine } from "./media";
 export { acceptSuggestions, rejectSuggestions, suggestChanges, suggestionCount, type Suggestion } from "./suggestions";
+export { autoPairMarkdown, editorCommands, type EditorCommand } from "./obsidian";

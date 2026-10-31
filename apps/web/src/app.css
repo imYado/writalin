@@ -376,10 +376,6 @@
 .ai-detect b { color: var(--w-text); font-weight: 600; }
 
 /* Text and highlight colours */
-.color-swatch { display: inline-block; width: 18px; height: 18px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12); }
-.color-swatch-none { background: linear-gradient(135deg, transparent 45%, var(--w-text-muted) 45%, var(--w-text-muted) 55%, transparent 55%); }
-.color-swatch-a { font-weight: 700; font-size: 16px; line-height: 1; }
-.color-swatch-clear { font-weight: 700; font-size: 16px; line-height: 1; color: var(--w-text-muted); text-decoration: line-through; }
 .sync-remotes { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .sync-remotes li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 12px; background: var(--w-soft); }
 .sync-remotes li > span { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -412,50 +408,29 @@
 /* Imported files on Home */
 .file-list .note-list-name { display: flex; align-items: center; gap: 6px; }
 
-/* ---------- Format panel: chips written in their own style ---------- */
-.fmt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.fmt-chip {
-  flex: none; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px;
-  border: 0; border-radius: 999px; background: var(--w-soft); color: var(--w-text);
-  font: inherit; font-size: 14px; line-height: 1; white-space: nowrap; cursor: pointer;
-  transition: background-color var(--w-anim) var(--w-ease), transform var(--w-anim) var(--w-ease);
+/* ---------- phone editing toolbar (Obsidian's mobile toolbar) ---------- */
+.edit-toolbar { display: none; }
+@media (pointer: coarse) {
+  /* While typing in a note it replaces the dock, right above the keyboard. */
+  .kb-open .stage:has(.cm-editor.cm-focused) .edit-toolbar { display: flex; }
+  .kb-open .stage:has(.cm-editor.cm-focused) .w-dock { display: none; }
 }
-.fmt-chip:hover { background: var(--w-accent-soft); }
-.fmt-chip:active { transform: scale(0.96); }
-.fmt-chip:disabled { opacity: 0.4; cursor: default; }
-.fmt-chip[aria-pressed="true"] { background: var(--w-accent-soft); color: var(--w-accent); }
-.fmt-view { color: var(--w-text-muted); font-size: 13px; }
-.fmt-bold { font-weight: 700; }
-.fmt-italic { font-style: italic; }
-.fmt-mark { background: rgb(255 212 59 / 0.45); }
-.fmt-mark:hover { background: rgb(255 212 59 / 0.65); }
-.fmt-strike { text-decoration: line-through; }
-.fmt-code { font-family: var(--w-font-mono, ui-monospace, monospace); font-size: 13px; }
-.fmt-h1 { font-weight: 700; font-size: 17px; }
-.fmt-h2 { font-weight: 650; font-size: 15px; }
-.fmt-h3 { font-weight: 600; font-size: 13px; }
-.fmt-quote { font-style: italic; }
-.fmt-rainbow { width: 14px; height: 14px; border-radius: 50%; background: conic-gradient(#e03131, #f08c00, #fcc419, #37b24d, #1c7ed6, #ae3ec9, #e03131); }
-/* A line break on wide screens; a thin divider in the phone row. */
-.fmt-sep { flex-basis: 100%; height: 4px; }
-.fmt-back { padding: 0 10px; }
-.fmt-swatch { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 50%; background: none; cursor: pointer; }
-.fmt-swatch:hover { background: var(--w-soft); }
-.fmt-swatch:disabled { opacity: 0.4; cursor: default; }
-.w-dock-panel:has(> .fmt) { padding: 12px; }
-
-/* Phones: one slim row that scrolls sideways, right above the dock (and the keyboard). */
-@media (max-width: 860px) {
-  .w-dock-panel:has(> .fmt) {
-    left: 8px; right: 8px; width: auto; transform: none; padding: 8px; border-radius: 20px;
-    overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
-    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent);
-            mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent);
-    animation-name: w-fmt-in;
-  }
-  .w-dock-panel:has(> .fmt)::-webkit-scrollbar { display: none; }
-  .fmt { flex-wrap: nowrap; width: max-content; padding-right: 16px; }
-  .w-dock-panel:has(> .fmt) { box-shadow: var(--w-shadow-lg), 0 0 0 1px rgb(127 127 127 / 0.22); }
-  .fmt-sep { flex: none; flex-basis: auto; width: 1px; height: 22px; margin: 0 4px; background: rgb(127 127 127 / 0.25); }
+.edit-toolbar {
+  align-items: center; min-width: 0; height: 46px;
+  background: var(--w-surface); box-shadow: 0 -1px 0 rgb(127 127 127 / 0.2);
 }
-@keyframes w-fmt-in { from { opacity: 0; transform: translateY(8px); } }
+.edit-toolbar-scroll {
+  flex: 1; min-width: 0; display: flex; align-items: center; height: 100%; padding: 0 4px;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+}
+.edit-toolbar-scroll::-webkit-scrollbar { display: none; }
+.edit-toolbar-btn {
+  flex: none; display: grid; place-items: center; width: 44px; height: 40px;
+  border: 0; border-radius: 10px; background: none; color: var(--w-text); cursor: pointer;
+}
+.edit-toolbar-btn:active { background: var(--w-soft); }
+.edit-toolbar-hide { box-shadow: -1px 0 0 rgb(127 127 127 / 0.2); border-radius: 0; color: var(--w-text-muted); }
+.point-menu-parent { position: relative; }
+.point-submenu { position: absolute; z-index: 61; }
+.point-menu-more { margin-left: auto; }
+.point-menu-item kbd + .point-menu-more { margin-left: 6px; }

@@ -6,7 +6,9 @@ export interface MenuItem {
   icon?: IconName;
   hint?: string;
   danger?: boolean;
-  onClick: () => void;
+  /** Opens a menu to the side instead (like Obsidian's Format, Paragraph and Insert). */
+  submenu?: MenuItem[];
+  onClick?: () => void;
 }
 
 export interface MenuSection {
@@ -60,7 +62,26 @@ export function PointMenu({ x, y, sections, onClose, label }: { x: number; y: nu
     };
   }, [onClose]);
 
-  const pick = (fn: () => void) => () => { onClose(); fn(); };
+  const pick = (fn?: () => void) => () => { onClose(); fn?.(); };
+  const [sub, setSub] = useState<string | null>(null);
+  const item = (it: MenuItem) => (
+    <button
+      key={it.label}
+      className={`point-menu-item w-glow${it.danger ? " danger" : ""}`}
+      role="menuitem"
+      aria-haspopup={it.submenu ? "menu" : undefined}
+      aria-expanded={it.submenu ? sub === it.label : undefined}
+      // Keep the editor's selection while using the menu.
+      onMouseDown={(e) => e.preventDefault()}
+      onMouseEnter={() => setSub(it.submenu ? it.label : null)}
+      onClick={it.submenu ? () => setSub((o) => (o === it.label ? null : it.label)) : pick(it.onClick)}
+    >
+      {it.icon ? <Icon name={it.icon} size={15} /> : <span className="point-menu-gap" />}
+      <span>{it.label}</span>
+      {it.hint && <kbd>{it.hint}</kbd>}
+      {it.submenu && <Icon name="chevronRight" size={14} className="point-menu-more" />}
+    </button>
+  );
   return (
     <div ref={ref} className="w-popover point-menu" role="menu" aria-label={label} style={pos} onContextMenu={(e) => e.preventDefault()}>
       {sections.map((s, i) => (
@@ -75,14 +96,48 @@ export function PointMenu({ x, y, sections, onClose, label }: { x: number; y: nu
               ))}
             </div>
           )}
-          {s.items.map((it) => (
-            <button key={it.label} className={`point-menu-item w-glow${it.danger ? " danger" : ""}`} role="menuitem" onClick={pick(it.onClick)}>
-              {it.icon ? <Icon name={it.icon} size={15} /> : <span className="point-menu-gap" />}
-              <span>{it.label}</span>
-              {it.hint && <kbd>{it.hint}</kbd>}
-            </button>
-          ))}
+          {s.items.map((it) =>
+            it.submenu ? (
+              <div key={it.label} className="point-menu-parent">
+                {item(it)}
+                {sub === it.label && <SubMenu items={it.submenu} label={it.label} onPick={pick} />}
+              </div>
+            ) : (
+              item(it)
+            ),
+          )}
         </div>
+      ))}
+    </div>
+  );
+}
+
+/** A menu beside its parent item, flipped to the other side or nudged up when it wouldn't fit. */
+function SubMenu({ items, label, onPick }: { items: MenuItem[]; label: string; onPick: (fn?: () => void) => () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [style, setStyle] = useState<{ left?: string; right?: string; top: number }>({ left: "100%", top: 0 });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const parent = el?.parentElement;
+    if (!el || !parent) return;
+    const p = parent.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const fitsRight = p.right + r.width + 8 < window.innerWidth;
+    const fitsLeft = p.left - r.width - 8 > 0;
+    const top = Math.min(0, window.innerHeight - 8 - (p.top + r.height));
+    if (fitsRight) setStyle({ left: "calc(100% + 4px)", top });
+    else if (fitsLeft) setStyle({ right: "calc(100% + 4px)", top });
+    // Phones: no room at the side, so it opens below the item.
+    else setStyle({ left: "8px", top: p.height });
+  }, []);
+  return (
+    <div ref={ref} className="w-popover point-menu point-submenu" role="menu" aria-label={label} style={style}>
+      {items.map((it) => (
+        <button key={it.label} className="point-menu-item w-glow" role="menuitem" onMouseDown={(e) => e.preventDefault()} onClick={onPick(it.onClick)}>
+          {it.icon ? <Icon name={it.icon} size={15} /> : <span className="point-menu-gap" />}
+          <span>{it.label}</span>
+          {it.hint && <kbd>{it.hint}</kbd>}
+        </button>
       ))}
     </div>
   );

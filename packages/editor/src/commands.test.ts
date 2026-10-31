@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EditorState, EditorSelection } from "@codemirror/state";
 import { exitInlineMark, makeCloze, setColor, setHighlight, toggleWrap } from "./commands";
+import { editorCommands } from "./obsidian";
 
 /** A minimal stand-in for EditorView: enough for commands that only read state and dispatch. */
 function fakeView(doc: string, anchor: number, head = anchor) {
@@ -125,11 +126,15 @@ describe("toggleWrap (Obsidian-style)", () => {
     expect(run("a **bold** b", 6, 6, "**").doc).toBe("a bold b");
   });
 
-  it("adds empty marks with the cursor between them outside a style", () => {
-    const v = fakeView("ab", 1);
+  it("styles the word at the cursor, or adds empty marks between words", () => {
+    let v = fakeView("hi there", 5);
     toggleWrap(v as never, "**");
-    expect(v.state.doc.toString()).toBe("a****b");
-    expect(v.state.selection.main.head).toBe(3);
+    expect(v.state.doc.toString()).toBe("hi **there**");
+    expect(v.state.selection.main.head).toBe(7);
+    v = fakeView("a  b", 2);
+    toggleWrap(v as never, "**");
+    expect(v.state.doc.toString()).toBe("a **** b");
+    expect(v.state.selection.main.head).toBe(4);
   });
 
   it("removes the style from just the selected part", () => {
@@ -164,5 +169,40 @@ describe("setColor on text that's already coloured", () => {
     const v = fakeView(doc, at("one"), at("one") + 3);
     setColor(v as never, "text", "#1c7ed6");
     expect(v.state.doc.toString()).toBe('a <span style="color:#1c7ed6">one</span><span style="color:#e03131"> two</span> b');
+  });
+});
+
+describe("Obsidian commands", () => {
+  const go = (doc: string, from: number, to: number, cmd: keyof typeof editorCommands) => {
+    const v = fakeView(doc, from, to);
+    editorCommands[cmd](v as never);
+    return v;
+  };
+  it("adds a markdown link around the selection, or around a URL", () => {
+    let v = go("see docs", 4, 8, "markdownLink");
+    expect(v.state.doc.toString()).toBe("see [docs]()");
+    expect(v.state.selection.main.head).toBe(11);
+    v = go("https://a.b", 0, 11, "markdownLink");
+    expect(v.state.doc.toString()).toBe("[](https://a.b)");
+    expect(v.state.selection.main.head).toBe(1);
+  });
+  it("sets, swaps and removes headings", () => {
+    let v = go("Title", 0, 0, "h2");
+    expect(v.state.doc.toString()).toBe("## Title");
+    editorCommands.h1(v as never);
+    expect(v.state.doc.toString()).toBe("# Title");
+    editorCommands.body(v as never);
+    expect(v.state.doc.toString()).toBe("Title");
+    v = go("### T", 0, 0, "heading");
+    expect(v.state.doc.toString()).toBe("#### T");
+  });
+  it("ticks a checkbox, and makes a plain line a checklist item", () => {
+    expect(go("- [ ] milk", 3, 3, "toggleCheckbox").state.doc.toString()).toBe("- [x] milk");
+    expect(go("milk", 0, 0, "toggleCheckbox").state.doc.toString()).toBe("- [ ] milk");
+  });
+  it("clears all formatting in the selection", () => {
+    const doc = 'a **b** ==c== *d* <span style="color:#e03131">e</span> f';
+    expect(go(doc, 0, doc.length, "clearFormatting").state.doc.toString()).toBe("a b c d e f");
+    expect(go("x **bold** y", 5, 5, "clearFormatting").state.doc.toString()).toBe("x bold y");
   });
 });

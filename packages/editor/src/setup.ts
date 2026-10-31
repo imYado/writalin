@@ -1,7 +1,7 @@
 import { suggestions } from "./suggestions";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, drawSelection, dropCursor, highlightActiveLine, keymap, placeholder as placeholderExt, rectangularSelection } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, deleteLine, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown, markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting, indentOnInput, bracketMatching } from "@codemirror/language";
 import { closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
@@ -11,7 +11,8 @@ import { livePreview, linkClicks } from "./livePreview";
 import { writalinCompletions } from "./completions";
 import { headingFolding } from "./folding";
 import { focusCompartment, focusModeExtension } from "./focusMode";
-import { exitInlineMark, makeCloze, toggleWrap } from "./commands";
+import { exitInlineMark, makeCloze } from "./commands";
+import { autoPairMarkdown, editorCommands } from "./obsidian";
 import { editorHost, type EditorHost } from "./host";
 import { printLayout, printCompartment } from "./printLayout";
 import { tables } from "./tables";
@@ -34,12 +35,18 @@ const highlight = HighlightStyle.define([
   { tag: [t.function(t.variableName), t.typeName, t.className], color: "var(--w-link)" },
 ]);
 
+/** Obsidian's default editing hotkeys. */
 const formatKeys = keymap.of([
-  { key: "Mod-b", run: (v) => toggleWrap(v, "**") },
-  { key: "Mod-i", run: (v) => toggleWrap(v, "*") },
-  { key: "Mod-Shift-h", run: (v) => toggleWrap(v, "==") },
-  { key: "Mod-e", run: (v) => toggleWrap(v, "`") },
-  { key: "Mod-Shift-x", run: (v) => toggleWrap(v, "~~") },
+  { key: "Mod-b", run: editorCommands.bold },
+  { key: "Mod-i", run: editorCommands.italic },
+  { key: "Mod-k", run: editorCommands.markdownLink },
+  { key: "Mod-l", run: editorCommands.toggleCheckbox },
+  { key: "Mod-]", run: editorCommands.indent },
+  { key: "Mod-[", run: editorCommands.outdent },
+  { key: "Mod-/", run: editorCommands.comment },
+  { key: "Mod-d", run: deleteLine },
+  { key: "Mod-Shift-h", run: editorCommands.highlight },
+  { key: "Mod-Shift-x", run: editorCommands.strikethrough },
   { key: "Mod-Alt-c", run: makeCloze },
 ]);
 
@@ -80,6 +87,7 @@ export function writalinExtensions(o: WritalinEditorOptions): Extension[] {
     focusCompartment.of(focusModeExtension(!!o.focusMode)),
     printCompartment.of(printLayout(!!o.printLayout)),
     formatKeys,
+    autoPairMarkdown,
     keymap.of([...closeBracketsKeymap, ...completionKeymap, { key: "Enter", run: exitInlineMark }, ...markdownKeymap, ...searchKeymap, ...historyKeymap, ...defaultKeymap, indentWithTab]),
     o.placeholder ? placeholderExt(o.placeholder) : [],
     EditorView.contentAttributes.of({ "aria-label": "Note editor", spellcheck: "true", autocorrect: "on", autocapitalize: "sentences" }),
