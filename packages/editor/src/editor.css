@@ -150,6 +150,9 @@
 /* Flashcards: `Question :: Answer` */
 .w-editor .cm-card { background: linear-gradient(90deg, var(--w-accent-soft), transparent 85%); border-radius: 10px; }
 .w-editor .cm-card-q { font-weight: 600; }
+.w-editor .cm-cloze { background: var(--w-accent-soft); color: var(--w-accent); border-radius: 5px; padding: 0 2px; font-weight: 600; }
+.w-editor .cm-cloze * { color: inherit; }
+.w-editor .cm-cloze-editing { font-weight: inherit; }
 .w-editor .cm-card-sep-raw { color: var(--w-accent); font-weight: 600; }
 /* The answer goes on its own row under the question, covered (not blurred) until shown. */
 .w-editor .cm-card-toggle { display: block; padding: 6px 0 0; line-height: 1; }

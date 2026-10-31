@@ -19,12 +19,14 @@ export interface AiAccount {
 export const AI_TOOLS = {
   explain: "Explain the text below in plain, simple words, as if to a smart student new to the topic. Use a short intro sentence, then a few bullet points, then one everyday example.",
   summarize: "Summarize the text below. Start with one bold sentence that says the main idea, then 3 to 6 short bullet points with the key details. Keep the student's terms.",
-  flashcards: "Make study flashcards from the text below. Output ONLY card lines, one per line, exactly in the form `Question :: Answer`, with a space on each side of `::`. No title, numbering, bullets, bold or blank lines. Make 6 to 15 cards covering the most important ideas, definitions, causes and processes. Each question is a clear, specific question ending in `?` that tests understanding, not trivia. Each answer is short: a few words or one sentence. Never use `::` inside a question or answer.",
+  flashcards: "Make study flashcards from the text below. Output ONLY card lines, one per line, exactly in the form `Question :: Answer`, with a space on each side of `::`. No title, numbering, bullets, bold or blank lines. Make 6 to 15 cards covering the most important ideas, definitions, causes and processes. Each question is a clear, specific question ending in `?` that tests understanding, not trivia. Each answer is short: a few words or one sentence. Never use `::` inside a question or answer. For a key term or number that is best learned inside its sentence (a definition, a date, a formula), you may instead write a fill-in-the-blank line: the sentence with that term wrapped as `{{c1::term}}` (use c2, c3 for more blanks in the same sentence), and no `::` outside the braces. Use these for at most a third of the cards.",
   quiz: "Write a quiz on the text below.",
   steps: "Break the task or text below into small, concrete next steps that each take 5 to 25 minutes. Output a Markdown checklist (`- [ ] step`), 3 to 8 items, starting with the easiest way to begin.",
   mainpoint: "In one or two sentences, what is the main point of the text below? No preamble.",
   whereWasI: "The student is coming back to this note after a break. In 2 to 4 short bullet points, say what they were working on, where they stopped (the end of the text is where the cursor was), and the single best next step.",
   ask: "Answer the student's question using the note below as context. If the note doesn't contain the answer, say so briefly and then answer from general knowledge, marking which part is which.",
+  /** A question about all the student's notes, answered from the passages the app found, with citations. */
+  vault: "Answer the student's question using the numbered passages from their own notes in <sources> below. After each sentence that uses a passage, cite it by number in square brackets, like [2], or [1][3] for several. Use only numbers that appear in <sources>. Prefer the student's own wording and terms. If the passages don't answer the question, say so in one sentence first; you may then add a short general answer, starting that part with \"From general knowledge:\" and giving it no citations. Keep it brief.",
   /** A question with no note attached: answer it directly. */
   chat: "Answer the student's question or do what they ask. Be clear and brief, and use the formatting below only where it helps.",
 } as const;
@@ -225,7 +227,7 @@ export async function runTool(
     instruction,
     opts.extra ? `\nExtra wishes from the student (follow them, but keep the layout and format rules above): ${opts.extra}` : "",
     question ? `\nQuestion: ${question}` : "",
-    text ? `\n<note>\n${text}\n</note>` : "",
+    text ? (tool === "vault" ? `\n<sources>\n${text}\n</sources>` : `\n<note>\n${text}\n</note>`) : "",
   ].join("");
   // A follow-up replays the conversation so far, then adds the new question.
   const messages: ChatMessage[] = [{ role: "user", content: first }];

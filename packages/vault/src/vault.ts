@@ -9,6 +9,7 @@ import { isDue, setCardSchedule } from "./markdown/flashcards";
 import { nextSchedule } from "./markdown/fsrs";
 import { tagMatches, normalizeTag } from "./markdown/tags";
 import { SearchIndex } from "./search";
+import { estimateMinutes, weakestDeck, type CardScope, type WeakDeck } from "./studyPlan";
 import { ACTIVITY_PATH, addActivity, emptyActivity, mergeActivity, type ActivityLog, type DayActivity } from "./activity";
 import { DEFAULT_SETTINGS, SETTINGS_PATH, SCRATCHPAD_PATH, REMINDERS_PATH, SCRATCH_FOLDER, TASKS_PATH, isScratch, isSystemNote, type VaultSettings } from "./settings";
 
@@ -55,12 +56,6 @@ export interface Backlink {
   path: VaultPath;
   /** Line of text around the link. */
   context: string;
-}
-
-/** Which cards to study: those in notes with a tag, or in a folder and its subfolders. */
-export interface CardScope {
-  tag?: string;
-  folder?: string;
 }
 
 export class Vault {
@@ -117,7 +112,8 @@ export class Vault {
     this.notes.set(meta.path, meta);
     const key = meta.name.toLowerCase();
     this.byName.set(key, [...(this.byName.get(key) ?? []), meta.path]);
-    this.search.set(meta.path, meta.name, splitFrontmatter(text).body);
+    const body = splitFrontmatter(text).body;
+    this.search.set(meta.path, meta.name, body, text.slice(0, text.length - body.length).split("\n").length - 1);
   }
 
   private unlinkName(path: VaultPath): void {
@@ -536,6 +532,16 @@ export class Vault {
     const due = this.dueCards(today, scope);
     const reviews = due.filter((c) => c.schedule).sort((a, b) => a.schedule!.due.localeCompare(b.schedule!.due));
     return [...reviews.slice(0, reviewsLeft), ...due.filter((c) => !c.schedule).slice(0, newLeft)];
+  }
+
+  /**
+   * What to study today: the review queue with a time estimate, then the
+   * deck with the most hard cards to practise.
+   */
+  studyPlan(today = isoDate()): { cards: Flashcard[]; minutes: number; fresh: number; weak: WeakDeck | null } {
+    const cards = this.studyQueue({}, today);
+    const weak = weakestDeck(this.notes.values(), new Set(this.dueCards(today)));
+    return { cards, minutes: estimateMinutes(cards), fresh: cards.filter((c) => !c.schedule).length, weak };
   }
 
   /** Check or uncheck a task in its note. Fails safely if the line moved. */

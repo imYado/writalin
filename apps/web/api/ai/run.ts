@@ -11,8 +11,9 @@ export const POST = handler(async (req) => {
   const text = String(body.text ?? "").trim();
   // A plain question needs no note; every other tool works on some text.
   if (!text && tool !== "ask" && tool !== "chat") throw new HttpError(400, "There's no text to work with yet.");
+  if (!text && tool === "vault") throw new HttpError(400, "Nothing in your notes matches that question.");
   if (text.length > MAX_INPUT_CHARS) throw new HttpError(413, "That's too much text at once. Select a smaller part of the note.");
-  const asking = tool === "ask" || tool === "chat";
+  const asking = tool === "ask" || tool === "chat" || tool === "vault";
   const question = asking ? String(body.question ?? "").trim().slice(0, 2000) : undefined;
   if (asking && !question) throw new HttpError(400, "Type a question first.");
 

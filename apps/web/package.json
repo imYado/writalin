@@ -18,12 +18,15 @@
     "@writalin/ui": "workspace:*",
     "@writalin/vault": "workspace:*",
     "@writalin/workspaces": "workspace:*",
+    "dompurify": "3.2.6",
+    "katex": "0.16.22",
     "marked": "^16.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
     "@tesseract.js-data/eng": "^1.0.0",
+    "@types/katex": "^0.16.8",
     "@types/node": "^22.15.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

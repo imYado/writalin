@@ -4,7 +4,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, typ
 import { editorHost } from "./host";
 import { parseMediaLine } from "./media";
 import { HIGHLIGHT_RE, highlightEmoji } from "./highlight";
-import { matchCardLine } from "@writalin/vault";
+import { matchCardLine, matchClozeLine } from "@writalin/vault";
 
 /**
  * Obsidian-style live preview: Markdown stays the document, but syntax marks
@@ -131,6 +131,8 @@ export function clearEmbedCache(): void {
 }
 
 const hide = Decoration.replace({});
+/** A cloze blank: its opening (`{{` or `{{c1::`), the word, then an optional `::hint` and `}}`. */
+const CLOZE_MARK_RE = /(\{\{(?:c\d+::)?)(.+?)((?:::.+?)?\}\})/g;
 
 function activeLines(state: EditorState): Set<number> {
   const lines = new Set<number>();
@@ -410,6 +412,30 @@ function build(view: EditorView): DecorationSet {
       decos.push(Decoration.replace({ widget: new CardToggle(line.from, open) }).range(sep, a));
       decos.push(Decoration.mark({ class: open ? "cm-card-a cm-card-a-shown" : "cm-card-a", attributes: open ? {} : { "aria-hidden": "true" } }).range(a, end));
       if (note) decos.push(hide.range(line.from + note.index, line.to));
+    }
+    // Cloze blanks: `{{c1::word::hint}}` shows as the highlighted word until the cursor is on the line.
+    for (let pos = from; pos <= to; ) {
+      const line = state.doc.lineAt(pos);
+      pos = line.to + 1;
+      if (!line.text.includes("{{") || inCode(line.from) || !matchClozeLine(line.text)) continue;
+      lineDeco(line.from, "cm-card");
+      const active = isActive(line.from);
+      for (const m of line.text.matchAll(CLOZE_MARK_RE)) {
+        const start = line.from + m.index;
+        if (inCode(start)) continue;
+        const word = start + m[1]!.length;
+        const end = start + m[0].length;
+        const wordEnd = word + m[2]!.length;
+        if (active) {
+          decos.push(Decoration.mark({ class: "cm-cloze cm-cloze-editing" }).range(start, end));
+          continue;
+        }
+        decos.push(hide.range(start, word));
+        decos.push(Decoration.mark({ class: "cm-cloze", attributes: m[3]!.length > 2 ? { title: `Hint: ${m[3]!.slice(2, -2)}` } : {} }).range(word, wordEnd));
+        decos.push(hide.range(wordEnd, end));
+      }
+      const note = SR_NOTE_RE.exec(line.text);
+      if (note && !active) decos.push(hide.range(line.from + note.index, line.to));
     }
     // Colour tags can nest (a coloured highlight around red text), so pair them per line with a stack.
     for (let pos = from; pos <= to; ) {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { CardScope, VaultRecord, Vault } from "@writalin/vault";
+import type { CardScope, VaultRecord, Vault, WeakDeck } from "@writalin/vault";
 import { isSystemNote, studyStats, tagMatches, taskDate, TASKS_PATH } from "@writalin/vault";
 import { basename, isHiddenPath, isMarkdown, isoDate, noteName, dirname, type VaultPath } from "@writalin/shared";
 import { Icon, toast } from "@writalin/ui";
@@ -17,6 +17,10 @@ interface Props {
   onZone: (zone: "calendar" | "activity") => void;
   /** Start reviewing today's flashcards, all of them or one tag's or folder's. */
   onStudyDue: (scope?: CardScope) => void;
+  /** Practise the hardest cards in one deck, without moving their due dates. */
+  onPractise: (weak: WeakDeck) => void;
+  /** Today's plan in one go, with the focus timer. */
+  onStartStudying: () => void;
   initialTag?: string;
 }
 
@@ -26,7 +30,7 @@ function greeting(): string {
 }
 
 /** Vault switcher, folders, recent notes, tags, search and today's tasks. */
-export function Home({ vault, version, records, currentId, onSwitchVault, onOpen, onNewNote, onDelete, onZone, onStudyDue, initialTag }: Props) {
+export function Home({ vault, version, records, currentId, onSwitchVault, onOpen, onNewNote, onDelete, onZone, onStudyDue, onPractise, onStartStudying, initialTag }: Props) {
   const activity = useContributions(vault, version, 52, "both");
   const todayWords = vault.activity.days[isoDate()]?.words ?? 0;
   const [q, setQ] = useState("");
@@ -64,6 +68,8 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
     () => [...vault.files.values()].filter((f) => !isMarkdown(f.path) && !isHiddenPath(f.path) && !f.path.startsWith(".writalin/")).sort((a, b) => b.mtime - a.mtime),
     [vault, version],
   );
+  const plan = useMemo(() => vault.studyPlan(today), [vault, version, today]);
+  const planMinutes = plan.minutes + (plan.weak ? Math.max(1, Math.round((plan.weak.cards.length * 8) / 60)) : 0);
   const dueToday = useMemo(
     () => vault.allTasks().filter((t) => t.status === "todo" && t.path !== TASKS_PATH && taskDate(t) != null && taskDate(t)! <= today).sort((a, b) => (taskDate(a)! + (a.time ?? "")).localeCompare(taskDate(b)! + (b.time ?? ""))),
     [vault, version, today],
@@ -160,6 +166,58 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
               </ul>
             </section>
             <aside className="home-side">
+              <section className="home-section">
+                <h2 className="home-h2-row">Today <button className="w-btn w-btn-small w-btn-ghost" onClick={() => onZone("calendar")}>Calendar <Icon name="chevronRight" size={14} /></button></h2>
+                {(plan.cards.length > 0 || plan.weak) && (
+                  <div className="today-plan">
+                    <ul className="today-plan-list">
+                      {plan.cards.length > 0 && (
+                        <li>
+                          <Icon name="copy" size={16} />
+                          <span>
+                            <strong>{plan.cards.length} card{plan.cards.length === 1 ? "" : "s"} to review</strong>
+                            <span className="w-muted w-small">About {plan.minutes} min{plan.fresh ? ` · ${plan.fresh} new` : ""}</span>
+                          </span>
+                          <button className="w-btn w-btn-small" onClick={() => onStudyDue()}>Review</button>
+                        </li>
+                      )}
+                      {plan.weak && (
+                        <li>
+                          <Icon name="focus" size={16} />
+                          <span>
+                            <strong>Practise {plan.weak.label}</strong>
+                            <span className="w-muted w-small">{plan.weak.cards.length} cards you often miss</span>
+                          </span>
+                          <button className="w-btn w-btn-small" onClick={() => onPractise(plan.weak!)}>Practise</button>
+                        </li>
+                      )}
+                    </ul>
+                    <button className="w-btn w-btn-primary today-plan-start" onClick={onStartStudying}>
+                      <Icon name="play" size={14} /> Start studying · about {planMinutes} min
+                    </button>
+                  </div>
+                )}
+                {dueToday.length === 0 ? (
+                  <p className="w-muted">{plan.cards.length || plan.weak ? "No tasks due." : "Nothing due. Enjoy the calm."}</p>
+                ) : (
+                  <ul className="today-list">
+                    {dueToday.slice(0, 8).map((t) => (
+                      <li key={`${t.path}:${t.line}`}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Complete: ${t.text}`}
+                          onChange={() => void vault.toggleTask(t).catch((e) => toast((e as Error).message, { tone: "warn" }))}
+                        />
+                        <button onClick={() => onOpen(t.path, { line: t.line })}>
+                          {t.time && <span className="w-muted">{t.time} </span>}
+                          {t.text}
+                          {taskDate(t)! < today && <span className="task-late"> · overdue</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
               {(study.total > 0 || study.quizzesWeek > 0) && (
                 <section className="home-section home-study">
                   <h2 className="home-h2-row">
@@ -197,29 +255,6 @@ export function Home({ vault, version, records, currentId, onSwitchVault, onOpen
                   </ul>
                 </section>
               )}
-              <section className="home-section">
-                <h2 className="home-h2-row">Today <button className="w-btn w-btn-small w-btn-ghost" onClick={() => onZone("calendar")}>Calendar <Icon name="chevronRight" size={14} /></button></h2>
-                {dueToday.length === 0 ? (
-                  <p className="w-muted">Nothing due. Enjoy the calm.</p>
-                ) : (
-                  <ul className="today-list">
-                    {dueToday.slice(0, 8).map((t) => (
-                      <li key={`${t.path}:${t.line}`}>
-                        <input
-                          type="checkbox"
-                          aria-label={`Complete: ${t.text}`}
-                          onChange={() => void vault.toggleTask(t).catch((e) => toast((e as Error).message, { tone: "warn" }))}
-                        />
-                        <button onClick={() => onOpen(t.path, { line: t.line })}>
-                          {t.time && <span className="w-muted">{t.time} </span>}
-                          {t.text}
-                          {taskDate(t)! < today && <span className="task-late"> · overdue</span>}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
               {files.length > 0 && (
                 <section className="home-section">
                   <h2>Files</h2>
