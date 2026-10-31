@@ -112,7 +112,8 @@ export class Vault {
     this.notes.set(meta.path, meta);
     const key = meta.name.toLowerCase();
     this.byName.set(key, [...(this.byName.get(key) ?? []), meta.path]);
-    this.search.set(meta.path, meta.name, splitFrontmatter(text).body);
+    const body = splitFrontmatter(text).body;
+    this.search.set(meta.path, meta.name, body, text.slice(0, text.length - body.length).split("\n").length - 1);
   }
 
   private unlinkName(path: VaultPath): void {

@@ -50,7 +50,7 @@ export interface AiRunOptions {
   /** Stops the answer part-way (the Stop button). */
   signal?: AbortSignal;
 }
-export type AiTool = "explain" | "summarize" | "flashcards" | "quiz" | "steps" | "mainpoint" | "whereWasI" | "ask";
+export type AiTool = "explain" | "summarize" | "flashcards" | "quiz" | "steps" | "mainpoint" | "whereWasI" | "ask" | "vault";
 
 export interface AiState {
   mode: AiMode;

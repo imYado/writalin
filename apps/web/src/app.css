@@ -394,6 +394,16 @@
 .home-study-stats strong { font-size: 1.15rem; }
 .home-study-stats span { font-size: 11.5px; color: var(--w-text-muted); line-height: 1.3; }
 
+/* Answers about all notes: citation links and the sources they point to. */
+.ai-cite { display: inline-flex; align-items: center; justify-content: center; min-width: 1.35em; height: 1.35em; margin: 0 1px; padding: 0 4px; border: 0; border-radius: 999px; background: var(--w-accent-soft); color: var(--w-accent); font-size: 0.72em; font-weight: 600; line-height: 1; vertical-align: 0.25em; cursor: pointer; }
+.ai-cite:disabled { cursor: default; }
+.ai-sources { display: grid; gap: 4px; }
+.ai-sources ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ai-source-open { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 10px; background: none; color: var(--w-text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.ai-source-open:hover:not(:disabled) { background: var(--w-soft); }
+.ai-source-open .ai-cite { vertical-align: 0; font-size: 11px; flex: none; }
+.ai-source-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* The answer while it's still coming in. */
 .ai-streaming .ai-result-text::after { content: ""; display: inline-block; width: 7px; height: 1em; margin-left: 2px; vertical-align: -2px; border-radius: 2px; background: var(--w-accent); animation: ai-caret 1s steps(2) infinite; }
 @keyframes ai-caret { 50% { opacity: 0; } }

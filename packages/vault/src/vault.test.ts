@@ -169,6 +169,25 @@ describe("flashcard reviews", () => {
   });
 });
 
+describe("passages for questions about the whole vault", () => {
+  it("finds the paragraphs that answer a question, with the file line and heading", async () => {
+    const { vault } = await makeVault({
+      "Biology/Cells.md": "---\ntags: [bio]\n---\n# Cells\n\nIntro to cells.\n\n## Mitochondria\n\nThe mitochondria make ATP through respiration.\n\n## Nucleus\n\nThe nucleus keeps the DNA.",
+      "History.md": "The French revolution began in 1789.",
+      "Energy.md": "Plants store energy as glucose.",
+    });
+    const hits = vault.search.passages("What do my notes say about how mitochondria make energy?");
+    expect(hits[0]).toMatchObject({ path: "Biology/Cells.md", heading: "Mitochondria", line: 9, text: "The mitochondria make ATP through respiration." });
+    // Not every word has to match: "energy" alone finds the other note.
+    expect(hits.map((h) => h.path)).toContain("Energy.md");
+    expect(hits.map((h) => h.path)).not.toContain("History.md");
+    // Word starts match, and common words alone find nothing.
+    expect(vault.search.passages("revolutions")).toEqual([]);
+    expect(vault.search.passages("revolution")[0]!.path).toBe("History.md");
+    expect(vault.search.passages("what is the")).toEqual([]);
+  });
+});
+
 describe("study plan", () => {
   it("estimates the time and suggests the deck with the most hard cards, leaving out due ones", async () => {
     const hard = (q: string, ease: number) => `${q} :: x <!--SR:!2099-01-01,3,${ease}-->`;

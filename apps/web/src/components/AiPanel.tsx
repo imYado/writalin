@@ -5,6 +5,7 @@ import { CardText } from "./CardText";
 import type { AiSourceText, WorkspaceAiSource } from "@writalin/workspaces";
 import { aiApi, ApiError, type Account, type AiState, type AiTool } from "../api";
 import { isEditAnswer, parseEdits, type AiEdit } from "../aiEdits";
+import { buildVaultSources, citedNumbers, sourcesFooter, sourceTitle, type CitedSource } from "../vaultSources";
 
 const TOOLS: { id: AiTool; label: string; desc: string; icon: IconName }[] = [
   { id: "explain", label: "Explain simply", desc: "Plain words and an example", icon: "bulb" },
@@ -47,6 +48,8 @@ interface Props {
   onStudy: (cards: { question: string; answer: string }[]) => void;
   /** Play a quiz the AI just made. */
   onPlayQuiz: (questions: QuizQuestion[]) => void;
+  /** Open a note at a line, for a citation in an answer about all notes. */
+  openSource?: (path: string, line: number) => void;
   /** Show the AI's edits in the open note for approval, inside `range`. */
   suggestEdits?: (edits: AiEdit[], range: { from: number; to: number } | undefined, summary: string) => EditResult | null;
 }
@@ -101,6 +104,8 @@ interface Convo {
   editable?: boolean;
   /** The edit questions were quick edits: answers are always edits. */
   forceEdit?: boolean;
+  /** A question about all notes: the passages its answers cite as `[n]`. */
+  sources?: CitedSource[];
   at: number;
 }
 
@@ -125,13 +130,13 @@ const writeRecent = (vaultId: string, list: Convo[]) => {
 /** The conversation on screen, kept while the panel is closed. */
 const openConvo = new Map<string, string | null>();
 
-const toolLabel = (c: Convo) => (c.tool === "ask" ? c.turns[0]?.q ?? "Question" : TOOLS.find((t) => t.id === c.tool)?.label ?? "Answer");
+const toolLabel = (c: Convo) => (c.tool === "ask" || c.tool === "vault" ? c.turns[0]?.q ?? "Question" : TOOLS.find((t) => t.id === c.tool)?.label ?? "Answer");
 const ago = (t: number) => {
   const m = Math.round((Date.now() - t) / 60_000);
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 60 * 24 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
 };
 
-export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, onOpenSettings, autoRun, onStudy, onPlayQuiz, suggestEdits }: Props) {
+export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, onOpenSettings, autoRun, onStudy, onPlayQuiz, suggestEdits, openSource }: Props) {
   const [enabled, setEnabled] = useState(vault.settings.aiEnabled);
   const [state, setState] = useState<AiState | null>(null);
   const [busy, setBusy] = useState<AiTool | null>(null);
@@ -178,7 +183,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
   const [error, setError] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   /** Read the note, or what's open in the side pane. An empty note starts on the side pane. */
-  const [use, setUse] = useState<"note" | "workspace">(() => (workspace && !getSource("summarize")?.text.trim() ? "workspace" : "note"));
+  const [use, setUse] = useState<"note" | "workspace" | "vault">(() => (workspace && !getSource("summarize")?.text.trim() ? "workspace" : "note"));
   const [scope, setScope] = useState(workspace?.defaultScope ?? "page");
   // Quiz style and the extra wishes are remembered on this device.
   const [quizKind, setQuizKind] = useState<"choice" | "written">(() => (readPref("quizKind") === "written" ? "written" : "choice"));
@@ -239,6 +244,24 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
   }
 
   const fromWorkspace = use === "workspace" && !!workspace && !pinned;
+  const fromVault = use === "vault" && !pinned;
+  /** Ask about all notes: find the passages that match, then ask with them as numbered sources. */
+  const runVault = async (q: string) => {
+    setError(null);
+    const { text, sources } = buildVaultSources(vault, q);
+    if (!sources.length) return setError("Nothing in your notes matches that question. Try other words, or switch to This note.");
+    setBusy("vault");
+    setOpenId(null);
+    try {
+      const turn = await ask("vault", text, q, undefined);
+      if (!turn) return;
+      keep({ id: crypto.randomUUID(), tool: "vault", turns: [{ ...turn, q }], text, label: `${sources.length} passage${sources.length === 1 ? "" : "s"} from your notes`, sources, at: Date.now() });
+      setQuestion("");
+    } finally {
+      setBusy(null);
+      setPartial(null);
+    }
+  };
   /** Ask the AI, streaming the answer in. Returns the answer, or null when it failed or was stopped empty. */
   const ask = async (tool: AiTool, text: string, q: string | undefined, edit: "auto" | "force" | undefined, thread?: Turn[], next?: string) => {
     const stop = new AbortController();
@@ -262,6 +285,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
     }
   };
   const run = async (tool: AiTool, from?: AiSource, quick?: string) => {
+    if (tool === "ask" && fromVault && !from && !quick) return runVault(question.trim());
     setError(null);
     let src = from ?? pinned ?? null;
     const q = tool === "ask" ? quick ?? question.trim() : undefined;
@@ -305,8 +329,10 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
     if (!q) return;
     setError(null);
     setBusy(c.tool);
-    let { text, label, footer, range } = c;
+    let { text, label, footer, range, sources } = c;
     try {
+      // A question about all notes looks for passages that match the follow-up too, keeping the earlier ones.
+      if (c.tool === "vault") ({ text, sources } = buildVaultSources(vault, `${q} ${c.turns[0]?.q ?? ""}`, c.sources));
       // Edits are made against the note as it is now, after any accepted changes.
       if (c.editable) {
         const src = getSource("ask");
@@ -320,7 +346,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       }
       const turn = await ask(c.tool, text, c.turns[0]?.q, c.editable ? (c.forceEdit ? "force" : "auto") : undefined, c.turns, q);
       if (!turn) return;
-      const next = { ...c, text, label, footer, range, turns: [...c.turns, { ...turn, q }], at: Date.now() };
+      const next = { ...c, text, label, footer, range, sources, turns: [...c.turns, { ...turn, q }], at: Date.now() };
       keep(next);
       if (c.editable && !turn.stopped && isEditAnswer(turn.a)) showEdits(next, next.turns.length - 1);
       setFollowUp("");
@@ -336,6 +362,8 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
   const scopeLabel = workspace?.scopes.find((x) => x.id === scope)?.label;
   const using = pinned
     ? `Using ${pinned.label}`
+    : fromVault
+      ? "Finds the parts of your notes that answer each question, and links them."
     : fromWorkspace
       ? `Using ${scopeLabel?.replace(/…$/, "").toLowerCase() ?? "it"} of “${workspace!.name}”`
       : noteSrc?.text.trim()
@@ -362,12 +390,12 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
         <input
           className="w-input"
           autoFocus={matchMedia("(pointer: fine)").matches}
-          placeholder={fromWorkspace || pinned ? "Ask about this PDF, or anything…" : noteSrc?.text.trim() && canInsert ? "Ask, or tell AI what to change…" : "Ask AI anything…"}
+          placeholder={fromVault ? "Ask about everything in your notes…" : fromWorkspace || pinned ? "Ask about this PDF, or anything…" : noteSrc?.text.trim() && canInsert ? "Ask, or tell AI what to change…" : "Ask AI anything…"}
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           aria-label="Ask AI a question"
         />
-        <button className="w-btn w-btn-primary w-btn-small" disabled={!question.trim() || busy != null}>{busy === "ask" ? "…" : "Ask"}</button>
+        <button className="w-btn w-btn-primary w-btn-small" disabled={!question.trim() || busy != null}>{busy === "ask" || busy === "vault" ? "…" : "Ask"}</button>
       </form>
 
       {extraOpen ? (
@@ -391,14 +419,19 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
         </button>
       )}
 
-      {workspace && !pinned && (
+      {!pinned && (
         <div className="ai-use" role="group" aria-label="What AI reads">
           <span className="w-small w-muted">Read:</span>
           <button className="w-chip" aria-pressed={use === "note"} onClick={() => setUse("note")}>
             <Icon name="notes" size={13} /> This note
           </button>
-          <button className="w-chip" aria-pressed={use === "workspace"} onClick={() => setUse("workspace")} title={workspace.name}>
-            <Icon name="pdf" size={13} /> <span className="ai-use-name">{workspace.name}</span>
+          {workspace && (
+            <button className="w-chip" aria-pressed={use === "workspace"} onClick={() => setUse("workspace")} title={workspace.name}>
+              <Icon name="pdf" size={13} /> <span className="ai-use-name">{workspace.name}</span>
+            </button>
+          )}
+          <button className="w-chip" aria-pressed={use === "vault"} onClick={() => setUse("vault")} title="Answers from all your notes, with links to where each part came from">
+            <Icon name="search" size={13} /> All notes
           </button>
         </div>
       )}
@@ -426,7 +459,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
         {pinned && <button className="ai-link" onClick={() => setPinned(null)}>{workspace ? "Choose again" : "Use the note instead"}</button>}
       </span>
 
-      {!fromWorkspace && !pinned && !!noteSrc?.text.trim() && suggestEdits && canInsert && (
+      {!fromWorkspace && !fromVault && !pinned && !!noteSrc?.text.trim() && suggestEdits && canInsert && (
         <div className="ai-use ai-quick-edits" role="group" aria-label="Edit with AI">
           <span className="w-small w-muted">Edit:</span>
           {QUICK_EDITS.map((e) => (
@@ -435,27 +468,29 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
         </div>
       )}
 
-      <div className="w-action-grid">
-        {TOOLS.map((t) => (
-          <button
-            key={t.id}
-            className="w-action"
-            disabled={busy != null}
-            aria-expanded={t.id === "quiz" ? quizSetup : undefined}
-            onClick={() => (t.id === "quiz" ? setQuizSetup((o) => !o) : void run(t.id))}
-          >
-            <Icon name={t.icon} size={16} />
-            <span className="w-action-text">
-              <span className="w-action-label">{t.label}</span>
-              <span className="w-action-desc">
-                {busy === t.id ? "Thinking…" : t.id === "quiz" ? `${quizCount} questions · ${quizKind === "choice" ? "multiple choice" : "written"}` : t.desc}
+      {!fromVault && (
+        <div className="w-action-grid">
+          {TOOLS.map((t) => (
+            <button
+              key={t.id}
+              className="w-action"
+              disabled={busy != null}
+              aria-expanded={t.id === "quiz" ? quizSetup : undefined}
+              onClick={() => (t.id === "quiz" ? setQuizSetup((o) => !o) : void run(t.id))}
+            >
+              <Icon name={t.icon} size={16} />
+              <span className="w-action-text">
+                <span className="w-action-label">{t.label}</span>
+                <span className="w-action-desc">
+                  {busy === t.id ? "Thinking…" : t.id === "quiz" ? `${quizCount} questions · ${quizKind === "choice" ? "multiple choice" : "written"}` : t.desc}
+                </span>
               </span>
-            </span>
-          </button>
-        ))}
-      </div>
+            </button>
+          ))}
+        </div>
+      )}
 
-      {quizSetup && (
+      {quizSetup && !fromVault && (
         <div className="ai-quiz-setup">
           <div className="ai-use" role="group" aria-label="Kind of quiz">
             <span className="w-small w-muted">Answer by:</span>
@@ -481,7 +516,8 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
         const quiz = convo.tool === "quiz" ? parseQuiz(last.a) : [];
         const body = cards.length ? formatCards(cards, { divider: true }) : last.a;
         const markdown = convo.tool === "flashcards" && cards.length ? `### Flashcards\n${body}` : body;
-        const full = convo.footer ? `${markdown}\n\n${convo.footer}` : markdown;
+        const footer = convo.tool === "vault" ? sourcesFooter(last.a, convo.sources ?? []) : convo.footer;
+        const full = footer ? `${markdown}\n\n${footer}` : markdown;
         return (
           <div className="ai-result">
             {convo.turns.map((t, i) => (
@@ -513,7 +549,9 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
                     {cards.map((c, k) => <li key={k}><b><CardText text={c.question} /></b><CardText text={c.answer} /></li>)}
                   </ul>
                 ) : (
-                  <div className={i < convo.turns.length - 1 ? "ai-result-text ai-earlier" : "ai-result-text"}>{t.a}</div>
+                  <div className={i < convo.turns.length - 1 ? "ai-result-text ai-earlier" : "ai-result-text"}>
+                    {convo.tool === "vault" ? <CitedText text={t.a} sources={convo.sources ?? []} onOpen={openSource} /> : t.a}
+                  </div>
                 )}
                 {t.stopped && <p className="w-small w-muted ai-stopped">Stopped before the end.</p>}
               </div>
@@ -552,6 +590,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
                 <button className="w-btn w-btn-small" disabled={!followUp.trim()}>Ask</button>
               </form>
             )}
+            {convo.tool === "vault" && !busy && <SourceList answer={last.a} sources={convo.sources ?? []} onOpen={openSource} />}
             {convo.label && <span className="w-small w-muted">Read {convo.label}</span>}
           </div>
         );
@@ -596,6 +635,46 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
               : "Built-in AI isn't switched on yet. Add your own key."}
         <button className="ai-link" onClick={onOpenSettings}>AI settings</button>
       </div>
+    </div>
+  );
+}
+
+/** An answer about all notes, with each `[n]` as a link to the passage it cites. */
+function CitedText({ text, sources, onOpen }: { text: string; sources: CitedSource[]; onOpen?: (path: string, line: number) => void }) {
+  const parts = text.split(/(\[\d{1,2}\])/);
+  return (
+    <>
+      {parts.map((part, i) => {
+        const n = /^\[(\d{1,2})\]$/.exec(part)?.[1];
+        const s = n ? sources.find((x) => x.n === Number(n)) : undefined;
+        if (!s) return part;
+        return (
+          <button key={i} className="ai-cite" title={`${sourceTitle(s)}, line ${s.line + 1}`} onClick={() => onOpen?.(s.path, s.line)} disabled={!onOpen}>
+            {s.n}
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+/** The passages an answer cited, to open each where it is in its note. */
+function SourceList({ answer, sources, onOpen }: { answer: string; sources: CitedSource[]; onOpen?: (path: string, line: number) => void }) {
+  const used = citedNumbers(answer).map((n) => sources.find((s) => s.n === n)).filter((s): s is CitedSource => !!s);
+  if (!used.length) return null;
+  return (
+    <div className="ai-sources">
+      <span className="w-small w-muted">Sources</span>
+      <ul>
+        {used.map((s) => (
+          <li key={s.n}>
+            <button className="ai-source-open" onClick={() => onOpen?.(s.path, s.line)} disabled={!onOpen} title={s.text.slice(0, 300)}>
+              <span className="ai-cite" aria-hidden="true">{s.n}</span>
+              <span className="ai-source-title">{sourceTitle(s)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

@@ -553,6 +553,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           focusWorkspace={aiFocus}
           canInsert={!noNote}
           insert={(md) => ed()?.insert(md, { block: true })}
+          openSource={(path, line) => void openPath(path, { line })}
           suggestEdits={(edits, range, summary) => {
             const e = ed();
             const doc = e?.view?.state.doc.toString();
