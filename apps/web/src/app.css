@@ -170,15 +170,12 @@
 
 /* ---------- AI panel ---------- */
 .ai-panel { display: flex; flex-direction: column; gap: 12px; }
-.ai-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.ai-head h3 { margin: 0 !important; }
 .ai-ask { display: flex; gap: 8px; }
 .ai-ask .w-input { flex: 1; min-width: 0; border-radius: 999px; padding-block: 10px; font-size: 15px; }
 .ai-use { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ai-use .w-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; }
 .ai-use-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
 .ai-scopes { padding-left: 10px; border-left: 2px solid var(--w-soft-2); }
-.ai-asked { margin: 0; font-style: italic; }
 .ai-extra { display: flex; flex-direction: column; gap: 4px; }
 .ai-extra > span { display: flex; align-items: center; }
 .ai-extra textarea { resize: vertical; border-radius: 14px; }
@@ -207,17 +204,7 @@
 .ai-error-text { color: var(--w-danger); }
 .ai-quick-edits .w-chip { font-size: 12px; }
 .ai-stop { align-self: center; display: inline-flex; align-items: center; gap: 4px; }
-.ai-turn { display: flex; flex-direction: column; gap: 6px; }
-.ai-turn + .ai-turn, .ai-result > .ai-streaming { padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--w-text) 10%, transparent); }
-.ai-earlier { max-height: 14vh; opacity: 0.8; }
-.ai-stopped { margin: 0; font-style: italic; }
-.ai-followup .w-input { font-size: 14px; padding-block: 8px; background: var(--w-surface); }
-.ai-recent summary { cursor: pointer; padding: 4px 0; }
-.ai-recent ul { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.ai-recent li { display: flex; align-items: center; gap: 4px; }
-.ai-recent-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 8px 10px; border: 0; border-radius: 12px; background: var(--w-soft); color: inherit; text-align: left; cursor: pointer; }
-.ai-recent-open:hover { background: var(--w-soft-2); }
-.ai-recent-title { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.ai-where { margin: 0; }
 @keyframes w-bounce { 0%, 100% { opacity: 0.3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-5px); } }
 
 /* ---------- welcome, login, splash ---------- */

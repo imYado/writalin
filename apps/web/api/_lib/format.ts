@@ -58,3 +58,26 @@ export function tidyAiMarkdown(md: string): string {
     .replace(/\[\^(\w+)\](?!:)/g, "($1)")
     .replace(/^\[\^(\w+)\]:\s*/gm, "($1) ");
 }
+
+const LEAD_IN = /^(?:(?:sure|okay|ok|certainly|of course|absolutely|alright|great question|got it|no problem|happy to help)\s*[!.,:\u2014-][^\n]*|(?:here(?:'s| is| are)|below (?:is|are)|the following (?:is|are))\b[^\n]*:\s*)$/i;
+const SIGN_OFF = /^(?:let me know|i hope (?:this|that)|hope (?:this|that)|feel free|if you (?:need|want|have|'d like)|would you like|do you want|want me to|good luck|happy studying)\b/i;
+
+/**
+ * Drop the chatty first and last lines some models add despite the prompt
+ * ("Sure! Here is the summary:", "Let me know if you need more."), since the
+ * answer goes straight into the note.
+ */
+export function stripChatter(md: string): string {
+  const lines = md.split("\n");
+  const first = lines.findIndex((l) => l.trim());
+  if (first >= 0 && lines.length - first > 1 && lines[first]!.length < 160 && LEAD_IN.test(lines[first]!.trim().replace(/^[*_]+|[*_]+$/g, ""))) {
+    lines.splice(0, first + 1);
+  }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i]!.trim();
+    if (!l) continue;
+    if (l.length < 200 && SIGN_OFF.test(l.replace(/^[*_]+/, "")) && lines.slice(0, i).some((x) => x.trim())) lines.splice(i);
+    break;
+  }
+  return lines.join("\n").trim();
+}

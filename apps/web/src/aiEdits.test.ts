@@ -25,6 +25,8 @@ describe("AI edits", () => {
     expect(isEditAnswer("@@edit\nFix")).toBe(true);
     expect(isEditAnswer("```\n@@edit\n")).toBe(true);
     expect(isEditAnswer("Mitochondria are…")).toBe(false);
+    expect(isEditAnswer("Sure, here are the changes:\n@@edit\nFixed")).toBe(true);
+    expect(parseEdits("Sure:\n@@edit\nFixed it.\n<<<FIND\na\n===REPLACE\nb\n>>>END")!.summary).toBe("Fixed it.");
   });
 
   it("parses the summary and blocks", () => {
@@ -54,5 +56,11 @@ describe("AI edits", () => {
     const { changes, missed } = planEdits(doc, [{ find: "cat", replace: "dog" }, { find: "bird", replace: "x" }], { from: 5, to: 8 });
     expect(changes).toEqual([{ from: 5, to: 8, insert: "dog" }]);
     expect(missed).toBe(1);
+  });
+
+  it("removes the line break with a deleted line", () => {
+    const doc = "Keep.\nDelete me.\nEnd.";
+    const { changes } = planEdits(doc, [{ find: "Delete me.", replace: "" }], { from: 0, to: doc.length });
+    expect(changes).toEqual([{ from: 6, to: 17, insert: "" }]);
   });
 });

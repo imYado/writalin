@@ -40,7 +40,10 @@ interface Props {
   focusWorkspace?: { scope: string; nonce: number };
   /** False when no note is open to put the answer in. */
   canInsert: boolean;
+  /** Put new text into the note at the cursor (and close the panel so it can be seen). */
   insert: (markdown: string) => void;
+  /** Take back what was just inserted. */
+  undo?: () => void;
   onOpenSettings: () => void;
   /** Run a tool as soon as the panel can, e.g. picked from the right-click menu. */
   autoRun?: { tool: AiTool; nonce: number; source?: AiSource };
@@ -74,113 +77,51 @@ const writePref = (k: string, v: string) => {
 /** The last `focusWorkspace` request applied, so reopening the panel later doesn't repeat it. */
 let appliedFocus = 0;
 
-interface Turn {
-  /** The question, for a question or a follow-up. */
-  q?: string;
-  a: string;
-  /** Stop was pressed part-way through. */
-  stopped?: boolean;
-}
-
 /** What happened when edits were shown in the note. */
 interface EditResult {
   shown: number;
   missed: number;
 }
 
-/** One answer and its follow-ups, with what was read so follow-ups read the same thing. */
-interface Convo {
-  id: string;
+/** An answer shown in the panel, when there's no note open to put it in. */
+interface Shown {
   tool: AiTool;
-  turns: Turn[];
   text: string;
-  label: string;
   footer?: string;
-  /** Read from the side pane (this scope of this file): a follow-up question re-picks the pages that match it. */
-  ws?: { name: string; scope: string };
-  /** Where in the note the text came from. */
-  range?: { from: number; to: number };
-  /** Read from the open note, so the AI may suggest edits to it. */
-  editable?: boolean;
-  /** The edit questions were quick edits: answers are always edits. */
-  forceEdit?: boolean;
-  /** A question about all notes: the passages its answers cite as `[n]`. */
   sources?: CitedSource[];
-  at: number;
 }
 
-/** Recent answers kept on this device, per vault, so closing the panel loses nothing. */
-const RECENT_MAX = 5;
-const readRecent = (vaultId: string): Convo[] => {
+/** Old builds kept recent answers on the device; they're no longer shown, so they're deleted. */
+function forgetSavedAnswers() {
   try {
-    const list = JSON.parse(readPref(`recent.${vaultId}`) ?? "[]") as Convo[];
-    return Array.isArray(list) ? list.filter((c) => c && Array.isArray(c.turns) && c.turns.length) : [];
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k?.startsWith("writalin.ai.recent.")) localStorage.removeItem(k);
+    }
   } catch {
-    return [];
+    /* private mode: nothing saved */
   }
-};
-const writeRecent = (vaultId: string, list: Convo[]) => {
-  const slim = list.slice(0, RECENT_MAX).map((c) => ({ ...c, turns: c.turns.slice(-8).map((t) => ({ ...t, a: t.a.slice(0, 20_000) })) }));
-  try {
-    writePref(`recent.${vaultId}`, slim.length ? JSON.stringify(slim) : "");
-  } catch {
-    /* full: just not remembered */
-  }
-};
-/** The conversation on screen, kept while the panel is closed. */
-const openConvo = new Map<string, string | null>();
+}
+forgetSavedAnswers();
 
-const toolLabel = (c: Convo) => (c.tool === "ask" || c.tool === "vault" ? c.turns[0]?.q ?? "Question" : TOOLS.find((t) => t.id === c.tool)?.label ?? "Answer");
-const ago = (t: number) => {
-  const m = Math.round((Date.now() - t) / 60_000);
-  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 60 * 24 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+const doneLabel: Partial<Record<AiTool, string>> = {
+  summarize: "Summary", explain: "Explanation", mainpoint: "Main point", steps: "Steps", flashcards: "Flashcards", quiz: "Quiz", whereWasI: "Recap",
 };
 
-export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, onOpenSettings, autoRun, onStudy, onPlayQuiz, suggestEdits, openSource }: Props) {
+export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, undo, onOpenSettings, autoRun, onStudy, onPlayQuiz, suggestEdits, openSource }: Props) {
   const [enabled, setEnabled] = useState(vault.settings.aiEnabled);
   const [state, setState] = useState<AiState | null>(null);
   const [busy, setBusy] = useState<AiTool | null>(null);
-  const vid = `${vault.store.kind}:${vault.store.name}`;
-  const [recent, setRecent] = useState<Convo[]>(() => readRecent(vid));
-  const [openId, setOpenIdState] = useState<string | null>(() => openConvo.get(vid) ?? null);
-  const convo = recent.find((c) => c.id === openId) ?? null;
-  // Saved straight away, not in an effect: showing edits closes the panel in the same update.
-  const setOpenId = (id: string | null) => {
-    openConvo.set(vid, id);
-    setOpenIdState(id);
-  };
-  const recentRef = useRef(recent);
-  const saveRecent = (next: Convo[]) => {
-    recentRef.current = next;
-    writeRecent(vid, next);
-    setRecent(next);
-  };
-  /** Save a new or longer conversation and show it. */
-  const keep = (c: Convo) => {
-    saveRecent([c, ...recentRef.current.filter((x) => x.id !== c.id)]);
-    setOpenId(c.id);
-  };
-  const forget = (id: string) => {
-    saveRecent(recentRef.current.filter((x) => x.id !== id));
-    if (openId === id) setOpenId(null);
-  };
   /** The answer so far, while it's still being written. */
   const [partial, setPartial] = useState<string | null>(null);
   const partialRef = useRef("");
   const stopRef = useRef<AbortController | null>(null);
   /** A slow step before the answer starts, e.g. reading scanned pages. */
   const [progress, setProgress] = useState<string | null>(null);
-  const [followUp, setFollowUp] = useState("");
-  /** The last edits shown in the note, by conversation. */
-  const [edited, setEdited] = useState<{ id: string; turn: number; r: EditResult | null } | null>(null);
-  const showEdits = (c: Convo, turn: number, range = c.range) => {
-    const p = parseEdits(c.turns[turn]?.a ?? "");
-    const r = p && p.edits.length && suggestEdits ? suggestEdits(p.edits, range, p.summary.split("\n")[0] ?? "") : null;
-    setEdited({ id: c.id, turn, r });
-  };
   /** Text handed over from elsewhere (a PDF), used instead of the note until cleared. */
   const [pinned, setPinned] = useState<AiSource | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shown, setShown] = useState<Shown | null>(null);
   const [question, setQuestion] = useState("");
   /** Read the note, or what's open in the side pane. An empty note starts on the side pane. */
   const [use, setUse] = useState<"note" | "workspace" | "vault">(() => (workspace && !getSource("summarize")?.text.trim() ? "workspace" : "note"));
@@ -221,7 +162,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       <div className="ai-intro">
         <span className="ai-badge"><Icon name="sparkle" size={18} /></span>
         <div>
-          <h3>Study helper</h3>
+          <h3>AI</h3>
           <p className="w-muted w-small">Sign in to use AI. It only sees the text you choose, and only when you ask.</p>
         </div>
         <a className="w-btn w-btn-primary w-btn-small" href="/login">Sign in</a>
@@ -233,8 +174,8 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       <div className="ai-intro">
         <span className="ai-badge"><Icon name="sparkle" size={18} /></span>
         <div>
-          <h3>Study helper</h3>
-          <p className="w-muted w-small">Explain, summarize, flashcards and more. AI is off until you turn it on, and it only sees the text you send.</p>
+          <h3>AI</h3>
+          <p className="w-muted w-small">Summarize, explain, make flashcards, or edit your note. AI is off until you turn it on, and it only sees the text you send.</p>
         </div>
         <button className="w-btn w-btn-primary w-btn-small" onClick={() => { void vault.saveSettings({ aiEnabled: true }); setEnabled(true); }}>
           Turn on
@@ -245,111 +186,102 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
 
   const fromWorkspace = use === "workspace" && !!workspace && !pinned;
   const fromVault = use === "vault" && !pinned;
-  /** Ask about all notes: find the passages that match, then ask with them as numbered sources. */
-  const runVault = async (q: string) => {
-    setError(null);
-    const { text, sources } = buildVaultSources(vault, q);
-    if (!sources.length) return setError("Nothing in your notes matches that question. Try other words, or switch to This note.");
-    setBusy("vault");
-    setOpenId(null);
-    try {
-      const turn = await ask("vault", text, q, undefined);
-      if (!turn) return;
-      keep({ id: crypto.randomUUID(), tool: "vault", turns: [{ ...turn, q }], text, label: `${sources.length} passage${sources.length === 1 ? "" : "s"} from your notes`, sources, at: Date.now() });
-      setQuestion("");
-    } finally {
-      setBusy(null);
-      setPartial(null);
-    }
-  };
-  /** Ask the AI, streaming the answer in. Returns the answer, or null when it failed or was stopped empty. */
-  const ask = async (tool: AiTool, text: string, q: string | undefined, edit: "auto" | "force" | undefined, thread?: Turn[], next?: string) => {
+
+  /** Ask the AI, streaming the answer in. Returns the answer, or null when it failed or was stopped. */
+  const ask = async (tool: AiTool, text: string, q: string | undefined, edit: "auto" | "force" | undefined) => {
     const stop = new AbortController();
     stopRef.current = stop;
     partialRef.current = "";
-    // Each earlier answer, then the question that came after it; the last one is the new question.
-    const pairs = thread?.map((t, i) => ({ answer: t.a, followUp: (i + 1 < thread.length ? thread[i + 1]!.q : next) ?? "" }));
     try {
-      const r = await aiApi.run(tool, text, q, { quizKind, count: quizCount, extra: extra.trim() || undefined, edit, thread: pairs?.slice(-8), signal: stop.signal }, (soFar) => {
+      const r = await aiApi.run(tool, text, q, { quizKind, count: quizCount, extra: extra.trim() || undefined, edit, signal: stop.signal }, (soFar) => {
         partialRef.current = soFar;
         setPartial(soFar);
       });
       void aiApi.state().then(setState).catch(() => {});
-      return { a: r.text } as Turn;
+      return r.text;
     } catch (e) {
-      if (stop.signal.aborted) return partialRef.current.trim() ? ({ a: partialRef.current.trim(), stopped: true } as Turn) : null;
-      setError(e instanceof ApiError ? e.message : "Something went wrong. Try again.");
+      // Stopped: nothing goes into the note.
+      if (!stop.signal.aborted) setError(e instanceof ApiError ? e.message : "Something went wrong. Try again.");
       return null;
     } finally {
       stopRef.current = null;
     }
   };
+
+  /**
+   * Put the answer where it belongs: changes are shown in the note to accept
+   * or reject; anything new goes straight into the note at the cursor. With no
+   * note open, it's shown here to copy.
+   */
+  const deliver = (tool: AiTool, answer: string, opts: { range?: { from: number; to: number }; footer?: string; sources?: CitedSource[] } = {}) => {
+    if (isEditAnswer(answer)) {
+      const p = parseEdits(answer);
+      if (!p?.edits.length) return setError("The AI didn't suggest any changes. Try saying exactly what to change.");
+      const r = suggestEdits?.(p.edits, opts.range, p.summary.split("\n")[0] ?? "");
+      if (!r?.shown) setError("The AI's changes didn't match your note. Try again, or select the part to change first.");
+      return;
+    }
+    const cards = tool === "flashcards" ? cardsFromText(answer) : [];
+    const body = cards.length ? `### Flashcards\n${formatCards(cards, { divider: true })}` : answer;
+    const footer = tool === "vault" ? sourcesFooter(answer, opts.sources ?? []) : opts.footer;
+    const full = footer ? `${body}\n\n${footer}` : body;
+    if (!canInsert) return setShown({ tool, text: answer, footer, sources: opts.sources });
+    const quiz = tool === "quiz" ? parseQuiz(answer) : [];
+    const what = doneLabel[tool] ?? "Answer";
+    toast(cards.length ? `Added ${cards.length} flashcards.` : `${what} added to your note.`, {
+      action: cards.length ? { label: "Study now", run: () => onStudy(cards) } : quiz.length ? { label: "Play quiz", run: () => onPlayQuiz(quiz) } : undo ? { label: "Undo", run: undo } : undefined,
+    });
+    insert(full);
+  };
+
+  /** Ask about all notes: find the passages that match, then ask with them as numbered sources. */
+  const runVault = async (q: string) => {
+    setError(null);
+    setShown(null);
+    const { text, sources } = buildVaultSources(vault, q);
+    if (!sources.length) return setError("Nothing in your notes matches that question. Try other words, or switch to This note.");
+    setBusy("vault");
+    try {
+      const a = await ask("vault", text, q, undefined);
+      if (a == null) return;
+      setQuestion("");
+      deliver("vault", a, { sources });
+    } finally {
+      setBusy(null);
+      setPartial(null);
+    }
+  };
   const run = async (tool: AiTool, from?: AiSource, quick?: string) => {
     if (tool === "ask" && fromVault && !from && !quick) return runVault(question.trim());
     setError(null);
+    setShown(null);
     let src = from ?? pinned ?? null;
     const q = tool === "ask" ? quick ?? question.trim() : undefined;
-    const ws = !src && fromWorkspace ? { name: workspace!.name, scope } : undefined;
-    if (ws) {
+    if (!src && fromWorkspace) {
       setBusy(tool);
       src = await workspace!.build(scope, q, setProgress).catch(() => null);
       setProgress(null);
       if (!src) return setBusy(null);
     }
     src ??= getSource(tool);
-    // A question works on its own; the tools need some text.
+    // A request works on its own; the tools need some text.
     const text = src?.text.trim() ? src.text : "";
     if (!text && tool !== "ask") {
       setBusy(null);
-      return setError("Open a note with some text, or a PDF on the side. You can also just ask a question above.");
+      return setError("Open a note with some text, or a PDF on the side. You can also just type a request above.");
     }
-    // A question about the open note may come back as edits to it.
-    const editable = tool === "ask" && !!text && !!src?.range;
+    // A request about the open note may come back as edits to it.
+    const editable = tool === "ask" && !!text && !!src?.range && canInsert;
     if (quick && !editable) {
       setBusy(null);
       return setError("Open a note with some text first. Select a part to edit only that.");
     }
     setBusy(tool);
-    setOpenId(null);
     try {
-      const turn = await ask(tool, text, q, editable ? (quick ? "force" : "auto") : undefined);
-      if (!turn) return;
-      const c: Convo = { id: crypto.randomUUID(), tool, turns: [{ ...turn, q }], text, label: text ? src!.label : "", footer: text ? src?.footer : undefined, ws, range: editable ? src!.range : undefined, editable, forceEdit: !!quick, at: Date.now() };
-      keep(c);
-      if (editable && !turn.stopped && isEditAnswer(turn.a)) showEdits(c, 0);
+      const a = await ask(tool, text, q, editable ? (quick ? "force" : "auto") : undefined);
+      if (a == null) return;
       if (tool === "ask" && !quick) setQuestion("");
-    } finally {
-      setBusy(null);
-      setPartial(null);
-    }
-  };
-  /** Ask more about the answer on screen. */
-  const runFollowUp = async (c: Convo) => {
-    const q = followUp.trim();
-    if (!q) return;
-    setError(null);
-    setBusy(c.tool);
-    let { text, label, footer, range, sources } = c;
-    try {
-      // A question about all notes looks for passages that match the follow-up too, keeping the earlier ones.
-      if (c.tool === "vault") ({ text, sources } = buildVaultSources(vault, `${q} ${c.turns[0]?.q ?? ""}`, c.sources));
-      // Edits are made against the note as it is now, after any accepted changes.
-      if (c.editable) {
-        const src = getSource("ask");
-        if (src?.text.trim() && src.range) ({ text, label, range } = src);
-      }
-      // A question about a long PDF re-picks the pages that match the new question.
-      if (c.ws && c.tool === "ask" && workspace?.name === c.ws.name) {
-        const src = await workspace.build(c.ws.scope, `${q} ${c.turns[0]?.q ?? ""}`, setProgress).catch(() => null);
-        setProgress(null);
-        if (src?.text.trim()) ({ text, label, footer } = src);
-      }
-      const turn = await ask(c.tool, text, c.turns[0]?.q, c.editable ? (c.forceEdit ? "force" : "auto") : undefined, c.turns, q);
-      if (!turn) return;
-      const next = { ...c, text, label, footer, range, sources, turns: [...c.turns, { ...turn, q }], at: Date.now() };
-      keep(next);
-      if (c.editable && !turn.stopped && isEditAnswer(turn.a)) showEdits(next, next.turns.length - 1);
-      setFollowUp("");
+      deliver(tool, a, { range: editable ? src!.range : undefined, footer: text ? src?.footer : undefined });
     } finally {
       setBusy(null);
       setPartial(null);
@@ -368,7 +300,8 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       ? `Using ${scopeLabel?.replace(/…$/, "").toLowerCase() ?? "it"} of “${workspace!.name}”`
       : noteSrc?.text.trim()
         ? `Using ${noteSrc.label}`
-        : "No note text yet. Questions still work.";
+        : "No note text yet. Requests still work.";
+  const where = canInsert ? "Answers go into your note at the cursor. Changes to your note wait for you to accept them." : "Open a note to put answers straight into it.";
   /** The answer while it's written; edits show as progress, not raw blocks. */
   const streamView = (text: string) => {
     if (!isEditAnswer(text)) return <div className="ai-result-text">{text}</div>;
@@ -382,33 +315,29 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
   };
   return (
     <div className="ai-panel">
-      <div className="ai-head">
-        <h3>Study helper</h3>
-      </div>
-
       <form className="ai-ask" onSubmit={(e) => { e.preventDefault(); void run("ask"); }}>
         <input
           className="w-input"
           autoFocus={matchMedia("(pointer: fine)").matches}
-          placeholder={fromVault ? "Ask about everything in your notes…" : fromWorkspace || pinned ? "Ask about this PDF, or anything…" : noteSrc?.text.trim() && canInsert ? "Ask, or tell AI what to change…" : "Ask AI anything…"}
+          placeholder={fromVault ? "Ask about everything in your notes…" : canInsert ? "Write, or tell AI what to change…" : "Ask AI anything…"}
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          aria-label="Ask AI a question"
+          aria-label="Ask AI"
         />
-        <button className="w-btn w-btn-primary w-btn-small" disabled={!question.trim() || busy != null}>{busy === "ask" || busy === "vault" ? "…" : "Ask"}</button>
+        <button className="w-btn w-btn-primary w-btn-small" disabled={!question.trim() || busy != null}>{busy === "ask" || busy === "vault" ? "…" : "Go"}</button>
       </form>
 
       {extraOpen ? (
         <label className="ai-extra">
           <span className="w-small w-muted">
-            Extra instructions for every answer
+            Extra instructions for every request
             {extra && <button type="button" className="ai-link" onClick={() => { setExtra(""); setExtraOpen(false); }}>Clear</button>}
           </span>
           <textarea
             className="w-input"
             rows={2}
             maxLength={1000}
-            placeholder="e.g. make it harder, focus on chapter 2, answer in French"
+            placeholder="e.g. keep it short, focus on chapter 2, write in French"
             value={extra}
             onChange={(e) => setExtra(e.target.value)}
           />
@@ -482,7 +411,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
               <span className="w-action-text">
                 <span className="w-action-label">{t.label}</span>
                 <span className="w-action-desc">
-                  {busy === t.id ? "Thinking…" : t.id === "quiz" ? `${quizCount} questions · ${quizKind === "choice" ? "multiple choice" : "written"}` : t.desc}
+                  {busy === t.id ? "Writing…" : t.id === "quiz" ? `${quizCount} questions · ${quizKind === "choice" ? "multiple choice" : "written"}` : t.desc}
                 </span>
               </span>
             </button>
@@ -510,92 +439,7 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       )}
 
       {error && <p className="ai-error" role="alert">{error}</p>}
-      {convo && (() => {
-        const last = convo.turns[convo.turns.length - 1]!;
-        const cards = convo.tool === "flashcards" ? cardsFromText(last.a) : [];
-        const quiz = convo.tool === "quiz" ? parseQuiz(last.a) : [];
-        const body = cards.length ? formatCards(cards, { divider: true }) : last.a;
-        const markdown = convo.tool === "flashcards" && cards.length ? `### Flashcards\n${body}` : body;
-        const footer = convo.tool === "vault" ? sourcesFooter(last.a, convo.sources ?? []) : convo.footer;
-        const full = footer ? `${markdown}\n\n${footer}` : markdown;
-        return (
-          <div className="ai-result">
-            {convo.turns.map((t, i) => (
-              <div key={i} className="ai-turn">
-                {t.q && <p className="ai-asked w-small w-muted">{i ? "Then you asked" : "You asked"}: {t.q}</p>}
-                {isEditAnswer(t.a) ? (() => {
-                  const p = parseEdits(t.a)!;
-                  const here = edited?.id === convo.id && edited.turn === i ? edited.r : undefined;
-                  return (
-                    <div className="ai-edit">
-                      <p className="ai-edit-title"><Icon name="sparkle" size={14} /> {p.summary.split("\n")[0] || "Suggested changes"}</p>
-                      {here === undefined ? (
-                        <p className="w-small w-muted">
-                          {p.edits.length} change{p.edits.length === 1 ? "" : "s"}.{" "}
-                          {canInsert && <button className="ai-link" onClick={() => showEdits(convo, i)}>Show in note</button>}
-                        </p>
-                      ) : here && here.shown ? (
-                        <p className="w-small w-muted">
-                          {here.shown} change{here.shown === 1 ? " is" : "s are"} shown in your note. Accept or reject {here.shown === 1 ? "it" : "them"} there.
-                          {here.missed > 0 && ` ${here.missed} didn't match the note and ${here.missed === 1 ? "was" : "were"} left out.`}
-                        </p>
-                      ) : (
-                        <p className="w-small ai-error-text">The changes didn't match your note. Try again, or select the part to change first.</p>
-                      )}
-                    </div>
-                  );
-                })() : i === convo.turns.length - 1 && cards.length ? (
-                  <ul className="ai-cards" aria-label={`${cards.length} flashcards`}>
-                    {cards.map((c, k) => <li key={k}><b><CardText text={c.question} /></b><CardText text={c.answer} /></li>)}
-                  </ul>
-                ) : (
-                  <div className={i < convo.turns.length - 1 ? "ai-result-text ai-earlier" : "ai-result-text"}>
-                    {convo.tool === "vault" ? <CitedText text={t.a} sources={convo.sources ?? []} onOpen={openSource} /> : t.a}
-                  </div>
-                )}
-                {t.stopped && <p className="w-small w-muted ai-stopped">Stopped before the end.</p>}
-              </div>
-            ))}
-            {busy && partial != null && <div className="ai-streaming">{streamView(partial)}</div>}
-            {!busy && (
-              <div className="w-row">
-                {canInsert && !isEditAnswer(last.a) && <button className="w-btn w-btn-primary w-btn-small" onClick={() => { insert(full); toast(cards.length ? `Added ${cards.length} flashcards to your note.` : "Added to your note."); setOpenId(null); }}>
-                  <Icon name="plus" size={14} /> {cards.length ? "Add cards to note" : "Insert into note"}
-                </button>}
-                {quiz.length > 0 && (
-                  <button className="w-btn w-btn-small" onClick={() => onPlayQuiz(quiz)}>
-                    <Icon name="play" size={14} /> Play quiz
-                  </button>
-                )}
-                {cards.length > 0 && (
-                  <button className="w-btn w-btn-small" onClick={() => onStudy(cards)}>
-                    <Icon name="play" size={14} /> Study now
-                  </button>
-                )}
-                {!isEditAnswer(last.a) && <button className="w-btn w-btn-small" onClick={() => void navigator.clipboard.writeText(full).then(() => toast("Copied."))}>
-                  <Icon name="copy" size={14} /> Copy
-                </button>}
-                <button className="w-btn w-btn-ghost w-btn-small" onClick={() => setOpenId(null)} title="It stays in Recent answers">Close</button>
-              </div>
-            )}
-            {!busy && (
-              <form className="ai-ask ai-followup" onSubmit={(e) => { e.preventDefault(); void runFollowUp(convo); }}>
-                <input
-                  className="w-input"
-                  placeholder={convo.tool === "flashcards" ? "e.g. make 5 harder ones" : convo.tool === "quiz" ? "e.g. why is question 2 right?" : convo.editable ? "Ask more, or ask for other changes…" : "Ask a follow-up…"}
-                  value={followUp}
-                  onChange={(e) => setFollowUp(e.target.value)}
-                  aria-label="Ask a follow-up question"
-                />
-                <button className="w-btn w-btn-small" disabled={!followUp.trim()}>Ask</button>
-              </form>
-            )}
-            {convo.tool === "vault" && !busy && <SourceList answer={last.a} sources={convo.sources ?? []} onOpen={openSource} />}
-            {convo.label && <span className="w-small w-muted">Read {convo.label}</span>}
-          </div>
-        );
-      })()}
-      {busy && !convo && partial != null && <div className="ai-result ai-streaming">{streamView(partial)}</div>}
+      {busy && partial != null && <div className="ai-result ai-streaming">{streamView(partial)}</div>}
       {busy && partial == null && (
         <div className="ai-loading" aria-live="polite">
           {progress ? <p className="w-small w-muted ai-progress">{progress}</p> : <><span /><span /><span /></>}
@@ -606,24 +450,33 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
           <Icon name="close" size={14} /> Stop
         </button>
       )}
+      {!busy && shown && (() => {
+        const cards = shown.tool === "flashcards" ? cardsFromText(shown.text) : [];
+        const quiz = shown.tool === "quiz" ? parseQuiz(shown.text) : [];
+        const full = shown.footer ? `${shown.text}\n\n${shown.footer}` : shown.text;
+        return (
+          <div className="ai-result">
+            {cards.length ? (
+              <ul className="ai-cards" aria-label={`${cards.length} flashcards`}>
+                {cards.map((c, k) => <li key={k}><b><CardText text={c.question} /></b><CardText text={c.answer} /></li>)}
+              </ul>
+            ) : (
+              <div className="ai-result-text">
+                {shown.tool === "vault" ? <CitedText text={shown.text} sources={shown.sources ?? []} onOpen={openSource} /> : shown.text}
+              </div>
+            )}
+            {shown.tool === "vault" && <SourceList answer={shown.text} sources={shown.sources ?? []} onOpen={openSource} />}
+            <div className="w-row">
+              {quiz.length > 0 && <button className="w-btn w-btn-small" onClick={() => onPlayQuiz(quiz)}><Icon name="play" size={14} /> Play quiz</button>}
+              {cards.length > 0 && <button className="w-btn w-btn-small" onClick={() => onStudy(cards)}><Icon name="play" size={14} /> Study now</button>}
+              <button className="w-btn w-btn-small" onClick={() => void navigator.clipboard.writeText(full).then(() => toast("Copied."))}><Icon name="copy" size={14} /> Copy</button>
+              <button className="w-btn w-btn-ghost w-btn-small" onClick={() => setShown(null)}>Close</button>
+            </div>
+          </div>
+        );
+      })()}
 
-      {recent.some((c) => c.id !== openId) && (
-        <details className="ai-recent">
-          <summary className="w-small w-muted">Recent answers</summary>
-          <ul>
-            {recent.filter((c) => c.id !== openId).map((c) => (
-              <li key={c.id}>
-                <button className="ai-recent-open" disabled={busy != null} onClick={() => { setError(null); setOpenId(c.id); }}>
-                  <span className="ai-recent-title">{toolLabel(c)}</span>
-                  <span className="w-small w-muted">{c.turns.length > 1 ? `${c.turns.length} answers · ` : ""}{ago(c.at)}</span>
-                </button>
-                <button className="w-icon-btn" aria-label="Remove" title="Remove" onClick={() => forget(c.id)}><Icon name="close" size={13} /></button>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-
+      <p className="w-small w-muted ai-where">{where}</p>
       <div className="ai-foot w-small w-muted">
         <Icon name={state?.mode === "own" ? "key" : "shield"} size={13} />
         {state == null
