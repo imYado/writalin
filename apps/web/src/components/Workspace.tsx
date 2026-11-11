@@ -8,6 +8,7 @@ import {
 } from "@writalin/ui";
 import { ActivityWorkspace, CalendarWorkspace, ImageWorkspace, NoteWorkspace, ScratchpadWorkspace, TasksWorkspace, removeWithUndo, useVaultVersion, type WorkspaceAiSource, type WorkspaceProps } from "@writalin/workspaces";
 import { AiPanel } from "./AiPanel";
+import { AskAiBox, type AskTarget } from "./AskAiBox";
 import { planEdits } from "../aiEdits";
 import { Home } from "./Home";
 import { NotePane, type NotePaneHandle } from "./NotePane";
@@ -80,6 +81,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const [dockOpen, setDockOpen] = useState<string | null>(null);
   /** The right-click menu on selected text, or the note's ⋯ menu. */
   const [menu, setMenu] = useState<{ kind: "selection" | "note"; x: number; y: number } | null>(null);
+  /** "Ask AI" on the highlighted text. */
+  const [askOn, setAskOn] = useState<AskTarget | null>(null);
   const [aiRun, setAiRun] = useState<{ tool: AiTool; nonce: number; source?: AiSource }>();
   /** What the open side-pane workspace (a PDF) offers the AI dock. */
   const [wsAi, setWsAi] = useState<WorkspaceAiSource | null>(null);
@@ -388,6 +391,10 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       if (mod && !e.shiftKey && ["k", "p", "o"].includes(e.key.toLowerCase())) {
         e.preventDefault();
         setPaletteOpen((o) => !o);
+      } else if (mod && !e.shiftKey && e.key.toLowerCase() === "j" && (e.target as Element | null)?.closest?.(".cm-editor")) {
+        // Ask AI about the highlighted text.
+        e.preventDefault();
+        askAboutSelection();
       } else if (mod && e.key === ".") {
         e.preventDefault();
         setFocusMode((f) => !f);
@@ -605,13 +612,30 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     toast(`Made “${noteName(path)}”. The link is where the text was.`, { action: { label: "Open", run: () => openPath(path) } });
   };
   const run = (c: EditorCommand) => ed()?.run(c);
+  /** Open "Ask AI" on the highlighted text, just under it. */
+  const askAboutSelection = () => {
+    const v = ed()?.view;
+    const r = v?.state.selection.main;
+    if (!v || !r || r.empty || !v.state.sliceDoc(r.from, r.to).trim()) return toast("Highlight some text first.", { tone: "warn" });
+    const at = v.coordsAtPos(r.to) ?? v.coordsAtPos(r.from);
+    const start = v.coordsAtPos(r.from);
+    setAskOn({
+      from: r.from,
+      to: r.to,
+      text: v.state.sliceDoc(r.from, r.to),
+      note: v.state.doc.toString(),
+      x: Math.min(start?.left ?? 40, at?.left ?? 40),
+      y: at?.bottom ?? 120,
+    });
+  };
   const hasSelection = () => !!ed()?.selection().trim();
   /** Right-click in a note: Obsidian's editor menu (Format, Paragraph, Insert), plus the study helper. */
   const editorMenu = (): MenuSection[] => [
     ...(hasSelection()
       ? [{
           items: [
-            { label: "Explain with AI", icon: "sparkle" as IconName, onClick: () => askAi("explain") },
+            { label: "Ask AI", icon: "sparkle" as IconName, hint: "Ctrl J", onClick: askAboutSelection },
+            { label: "Explain with AI", icon: "bulb" as IconName, onClick: () => askAi("explain") },
             { label: "Summarize with AI", icon: "notes" as IconName, onClick: () => askAi("summarize") },
             { label: "Make flashcards", icon: "copy" as IconName, onClick: () => askAi("flashcards") },
             { label: "Extract to a new note", icon: "file" as IconName, onClick: () => void selectionToNote() },
@@ -920,7 +944,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           )}
         </main>
 
-        {zone === "note" && !noNote && <EditToolbar run={run} attach={() => insertImageInput.current?.click()} hideKeyboard={() => ed()?.view?.contentDOM.blur()} />}
+        {zone === "note" && !noNote && <EditToolbar run={run} ask={askAboutSelection} attach={() => insertImageInput.current?.click()} hideKeyboard={() => ed()?.view?.contentDOM.blur()} />}
         {zone === "note" && <BottomBar items={bar} openId={dockOpen} onOpenChange={setDockOpen} />}
       </div>
 
@@ -932,6 +956,24 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           onClose={() => setQuiz(null)}
           onFinish={(right, total) => vault.recordStudy({ quizzes: 1, quizRight: right, quizTotal: total })}
           onMakeCards={addCardsToNote}
+        />
+      )}
+      {askOn && (
+        <AskAiBox
+          vault={vault}
+          target={askOn}
+          currentNote={() => ed()?.view?.state.doc.toString() ?? null}
+          suggest={(changes, summary) => ed()?.suggest(changes, summary)}
+          addBelow={(md, at) => {
+            const e = ed();
+            const v = e?.view;
+            if (!e || !v) return;
+            v.dispatch({ selection: { anchor: Math.min(at, v.state.doc.length) } });
+            e.insert(md, { block: true });
+            toast("Added under the text.", { action: { label: "Undo", run: () => e.run("undo") } });
+          }}
+          onOpenSettings={() => { setAskOn(null); setSettingsOpen("ai"); }}
+          onClose={() => setAskOn(null)}
         />
       )}
       {menu && <PointMenu x={menu.x} y={menu.y} label={menu.kind === "note" ? "Note" : "Editor"} sections={menu.kind === "note" ? noteMenu : editorMenu()} onClose={() => setMenu(null)} />}
@@ -1095,12 +1137,15 @@ const TOOLBAR: { cmd: EditorCommand; icon: IconName; label: string }[] = [
  * you type in a note, scrolling sideways, with "hide keyboard" kept at the end.
  * It only shows on phones and tablets (see app.css).
  */
-function EditToolbar({ run, attach, hideKeyboard }: { run: (c: EditorCommand) => void; attach: () => void; hideKeyboard: () => void }) {
+function EditToolbar({ run, ask, attach, hideKeyboard }: { run: (c: EditorCommand) => void; ask: () => void; attach: () => void; hideKeyboard: () => void }) {
   // Tapping a button mustn't take focus from the note, or the keyboard would close.
   const keep = (e: { preventDefault(): void }) => e.preventDefault();
   return (
     <div className="edit-toolbar" role="toolbar" aria-label="Editing" onPointerDown={keep} onMouseDown={keep}>
       <div className="edit-toolbar-scroll">
+        <button className="edit-toolbar-btn edit-toolbar-ai" aria-label="Ask AI about the highlighted text" title="Ask AI" onClick={ask}>
+          <Icon name="sparkle" size={20} />
+        </button>
         {TOOLBAR.map((b) => (
           <button key={b.cmd} className="edit-toolbar-btn" aria-label={b.label} title={b.label} onClick={() => run(b.cmd)}>
             <Icon name={b.icon} size={20} />

@@ -309,20 +309,46 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     if (doc && initialPage) requestAnimationFrame(() => goTo(initialPage));
   }, [doc, initialPage, goTo]);
 
-  // Track the current page while scrolling.
+  /**
+   * The current page is the one that fills most of the view; on a tie (two
+   * half pages), the one nearer the top. Measured on every scroll, zoom and
+   * resize, so it is always the page you are looking at.
+   */
+  const measure = useRef(0);
+  const trackPage = useCallback(() => {
+    if (measure.current) return;
+    measure.current = requestAnimationFrame(() => {
+      measure.current = 0;
+      const root = scroller.current;
+      if (!root) return;
+      const view = root.getBoundingClientRect();
+      let best = 0;
+      let bestSeen = 0;
+      for (const el of root.querySelectorAll<HTMLElement>("[data-page]")) {
+        const r = el.getBoundingClientRect();
+        if (r.bottom <= view.top) continue;
+        if (r.top >= view.bottom) break;
+        const seen = Math.min(r.bottom, view.bottom) - Math.max(r.top, view.top);
+        if (seen > bestSeen + 1) {
+          bestSeen = seen;
+          best = Number(el.dataset.page);
+        }
+      }
+      if (best) setPage(best);
+    });
+  }, []);
   useEffect(() => {
     const root = scroller.current;
     if (!root || !doc) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.filter((e) => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-        if (visible) setPage(Number((visible.target as HTMLElement).dataset.page));
-      },
-      { root, threshold: [0.25, 0.6] },
-    );
-    root.querySelectorAll("[data-page]").forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, [doc, zoom]);
+    trackPage();
+    const ro = new ResizeObserver(trackPage);
+    ro.observe(root);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(measure.current);
+      measure.current = 0;
+    };
+  }, [doc, zoom, trackPage]);
 
   const onMouseUp = () => {
     const s = window.getSelection();
@@ -414,7 +440,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
             ))}
           </nav>
         )}
-        <div className="ws-scroll pdf-pages" ref={scroller} onMouseUp={onMouseUp} onClick={onPagesClick} onScroll={() => { if (sel) setSel(null); if (activeHl) setActiveHl(null); }}>
+        <div className="ws-scroll pdf-pages" ref={scroller} onMouseUp={onMouseUp} onClick={onPagesClick} onScroll={() => { trackPage(); if (sel) setSel(null); if (activeHl) setActiveHl(null); }}>
           {error && <p className="ws-empty">{error}</p>}
           {!doc && !error && <p className="ws-empty w-muted">Opening PDF…</p>}
           {doc && Array.from({ length: doc.numPages }, (_, i) => (
