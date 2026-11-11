@@ -7,3 +7,4 @@ export * from "./ImageWorkspace";
 export * from "./NoteWorkspace";
 export * from "./ActivityWorkspace";
 export * from "./undo";
+export * from "./pdfBlank";

@@ -50,4 +50,48 @@ export interface WorkspaceProps {
   registerAiSource?: (source: WorkspaceAiSource | null) => void;
   /** Open the AI panel reading this workspace, starting on one of its scopes. */
   openAi?: (scope?: string) => void;
+  /** Markdown (with `$math$`) as safe HTML, for text written on a PDF. */
+  renderText?: (markdown: string) => Promise<string>;
+}
+
+/** Text sizes the AI can write on a board with. */
+export type BoardTextSize = "s" | "m" | "l" | "xl";
+
+/**
+ * One step of the AI working on a PDF page, like a teacher at a board.
+ * Positions are in page units: the page is 100 wide, `(0, 0)` is the top-left
+ * corner. Inside a figure they are measured from the figure's top-left.
+ */
+export type BoardOp =
+  /** A line of writing under what's already there; long text wraps. */
+  | { op: "write"; text: string; size?: BoardTextSize; color?: string }
+  /** Text at a place, e.g. a label in a figure. */
+  | { op: "text"; x: number; y: number; text: string; size?: BoardTextSize; color?: string }
+  | { op: "line" | "arrow"; x1: number; y1: number; x2: number; y2: number; color?: string }
+  | { op: "rect" | "ellipse" | "highlight" | "cover"; x: number; y: number; w: number; h: number; color?: string }
+  | { op: "draw"; points: [number, number][]; color?: string }
+  /** Keep room for a drawing `height` units tall under the writing; shapes that follow are placed inside it. */
+  | { op: "figure"; height: number }
+  | { op: "end" }
+  /** Carry on on a fresh page. */
+  | { op: "page" }
+  /** Wipe the page being worked on. */
+  | { op: "erase" };
+
+/** A PDF the AI can write and draw on, live. */
+export interface PdfBoard {
+  path: VaultPath;
+  name: string;
+  /** An empty PDF (pages can be added) rather than a printed one. */
+  blank: boolean;
+  /** Start a round of work: picks the page and where the writing carries on. */
+  begin(): void;
+  /** What's on the page being worked on, for the AI to read. */
+  describe(): Promise<string>;
+  /** Do one step, drawn or typed out live. Resolves, with the marks it added, once it's on the page. */
+  apply(op: BoardOp): Promise<string[]>;
+  /** Take marks back off (undo a round of work). */
+  remove(ids: string[]): void;
+  /** Finish whatever is being drawn at once. */
+  hurry(): void;
 }

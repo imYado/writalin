@@ -49,10 +49,14 @@ export interface AiRunOptions {
   edit?: "auto" | "force" | "selection";
   /** With `edit: "selection"`: the highlighted text, the only part the AI may change. `text` is then the whole note, for context. */
   selection?: string;
+  /** The tutor: what is on the board now, whether it is a printed page, and the conversation so far. */
+  board?: string;
+  printed?: boolean;
+  history?: { role: "user" | "assistant"; content: string }[];
   /** Stops the answer part-way (the Stop button). */
   signal?: AbortSignal;
 }
-export type AiTool = "explain" | "summarize" | "flashcards" | "quiz" | "steps" | "mainpoint" | "whereWasI" | "ask" | "vault";
+export type AiTool = "explain" | "summarize" | "flashcards" | "quiz" | "steps" | "mainpoint" | "whereWasI" | "ask" | "vault" | "tutor";
 
 export interface AiState {
   mode: AiMode;

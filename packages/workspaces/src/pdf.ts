@@ -3,11 +3,25 @@
 import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
+import { BLANK_PDF_PRODUCER } from "./pdfBlank";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
+/** One printed line of a page, in page units (the page is 100 wide; `y` is the line's top). */
+export interface PdfLine {
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface PdfDoc {
   numPages: number;
+  /** An empty PDF made by Writalin: pages can be added to it. */
+  blank: boolean;
+  /** The printed lines of page `n` with where they are, so the AI can point at them. */
+  pageLines(n: number): Promise<PdfLine[]>;
   pageSize(n: number): Promise<{ w: number; h: number }>;
   /** Render page `n` into `el`. Returns a cancel function. */
   render(n: number, el: HTMLElement, opts: { scale: number; cssScale: number; textLayer: boolean }): () => void;
@@ -34,6 +48,31 @@ const wasmSimd = () => {
 
 export async function loadPdf(data: ArrayBuffer): Promise<PdfDoc> {
   const pdf = await pdfjs.getDocument({ data: new Uint8Array(data) }).promise;
+  const info = await pdf.getMetadata().then((m) => m.info as { Producer?: string } | undefined, () => undefined);
+  const pageLines = async (n: number): Promise<PdfLine[]> => {
+    const page = await pdf.getPage(n);
+    const vp = page.getViewport({ scale: 1 });
+    const u = 100 / vp.width;
+    const content = await page.getTextContent();
+    const lines: PdfLine[] = [];
+    for (const it of content.items) {
+      if (!("str" in it) || !it.str.trim()) continue;
+      // The item's baseline start, moved into the page's top-left coordinates.
+      const [x, base] = vp.convertToViewportPoint(it.transform[4] as number, it.transform[5] as number) as [number, number];
+      const h = (it.height || Math.abs(it.transform[3] as number) || 10) * u;
+      const piece = { text: it.str, x: x * u, y: base * u - h, w: it.width * u, h };
+      const last = lines[lines.length - 1];
+      // Pieces on the same baseline, left to right, are one line.
+      if (last && Math.abs(last.y + last.h - (piece.y + piece.h)) < Math.max(last.h, h) * 0.5 && piece.x >= last.x) {
+        const gap = piece.x - (last.x + last.w);
+        last.text += (gap > h * 0.2 && !last.text.endsWith(" ") ? " " : "") + piece.text;
+        last.w = Math.max(last.w, piece.x + piece.w - last.x);
+        last.y = Math.min(last.y, piece.y);
+        last.h = Math.max(last.h, h);
+      } else lines.push(piece);
+    }
+    return lines.map((l) => ({ ...l, text: l.text.replace(/\s+/g, " ").trim() })).filter((l) => l.text);
+  };
   const textCache = new Map<number, string>();
   const pageText = async (n: number) => {
     let t = textCache.get(n);
@@ -79,6 +118,8 @@ export async function loadPdf(data: ArrayBuffer): Promise<PdfDoc> {
   };
   return {
     numPages: pdf.numPages,
+    blank: info?.Producer === BLANK_PDF_PRODUCER,
+    pageLines,
     async pageSize(n) {
       const page = await pdf.getPage(n);
       const vp = page.getViewport({ scale: 1 });

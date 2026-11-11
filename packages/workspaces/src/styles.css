@@ -146,7 +146,16 @@
 .ws-pdf .pdf-page { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
 .pdf-page-input { width: 60px; }
 /* Phones: the tab already shows the file name, so the toolbar keeps its room for the controls. */
-@media (max-width: 600px) { .ws-pdf .ws-toolbar .ws-title { display: none; } .pdf-search { flex: 1 1 100%; } .pdf-search .w-input { flex: 1; width: auto; min-width: 0; } }
+/* On a phone the PDF's tools are one row to scroll sideways, so the page keeps its room. */
+@media (max-width: 600px) {
+  .ws-pdf .ws-toolbar { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; padding: 8px 12px; }
+  .ws-pdf .ws-toolbar::-webkit-scrollbar { display: none; }
+  .ws-pdf .ws-toolbar > * { flex: none; }
+  .ws-pdf .ws-toolbar .ws-title { display: none; }
+  .pdf-search { margin-left: 0; }
+  .pdf-search .w-input { width: 130px; }
+  .pdf-draw-bar { padding: 0 12px 8px; }
+}
 .pdf-search { display: flex; gap: 6px; margin-left: auto; }
 .pdf-search .w-input { width: 150px; }
 .pdf-body { flex: 1; display: flex; min-height: 0; }
@@ -198,3 +207,44 @@
 .pdf-pick-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
 .pdf-thumb .pdf-page-box { max-width: 100%; height: auto !important; }
 .pdf-thumb canvas { max-width: 100%; height: auto; }
+
+/* Drawing, shapes and text on PDF pages. */
+.pdf-marks { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.pdf-marks svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.pdf-marks-catch { position: absolute; inset: 0; z-index: 3; pointer-events: auto; touch-action: none; cursor: crosshair; }
+.pdf-tool-select .pdf-marks-catch { cursor: default; }
+.pdf-tool-text .pdf-marks-catch { cursor: text; }
+.pdf-tool-eraser .pdf-marks-catch { cursor: cell; }
+.pdf-mark-hl { mix-blend-mode: multiply; }
+.pdf-mark-text { position: absolute; z-index: 2; margin: 0; line-height: 1.3; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--w-font); pointer-events: none; }
+.pdf-mark-text.card-md { white-space: normal; }
+.pdf-mark-text.card-md p { margin: 0; }
+.pdf-mark-text.card-md p + p { margin-top: 0.4em; }
+.pdf-mark-text.card-md ul, .pdf-mark-text.card-md ol { display: block; margin: 0; padding-left: 1.3em; }
+.pdf-mark-text.card-md h1, .pdf-mark-text.card-md h2, .pdf-mark-text.card-md h3 { margin: 0; font-size: 1.2em; line-height: 1.25; }
+.pdf-mark-text .katex-display { margin: 0.2em 0; }
+.pdf-mark-hit { pointer-events: auto; }
+.pdf-mark-note { padding: 0.12em 0.4em; border-radius: 0.3em; background: rgb(255 248 197 / 0.94); box-shadow: 0 0 0 1px rgb(0 0 0 / 0.08); }
+.pdf-mark-text.pdf-mark-selected { outline: 2px solid var(--w-accent); outline-offset: 2px; border-radius: 4px; }
+g.pdf-mark-selected { filter: drop-shadow(0 0 0.35px var(--w-accent)) drop-shadow(0 0 0.35px var(--w-accent)); }
+.pdf-mark-editing { z-index: 5; pointer-events: auto; box-sizing: content-box; padding: 0; border: 0; resize: none; overflow: hidden; background: rgb(255 255 255 / 0.88); outline: 2px dashed var(--w-accent); outline-offset: 3px; border-radius: 3px; }
+.pdf-mark-typing::after { content: ""; display: inline-block; width: 0.08em; height: 1em; margin-left: 0.06em; vertical-align: -0.12em; background: currentColor; opacity: 0.7; }
+@keyframes pdf-mark-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.pdf-mark-draw { stroke-dasharray: 1; animation: pdf-mark-draw linear both; }
+@keyframes pdf-mark-fade { from { opacity: 0; } }
+.pdf-mark-fade { animation: pdf-mark-fade 260ms ease-out both; }
+@media (prefers-reduced-motion: reduce) { .pdf-mark-draw, .pdf-mark-fade { animation: none; } }
+
+.pdf-draw-toggle[aria-pressed="true"] { background: var(--w-accent-soft); color: var(--w-accent); }
+.pdf-draw-bar { display: flex; align-items: center; gap: 8px; padding: 0 14px 10px; }
+.pdf-draw-scroll { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 14px; background: var(--w-soft); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.pdf-draw-scroll::-webkit-scrollbar { display: none; }
+.pdf-draw-btn { flex: none; display: grid; place-items: center; width: 34px; height: 32px; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--w-text); cursor: pointer; transition: background var(--w-anim); }
+.pdf-draw-btn:hover { background: var(--w-soft-2); }
+.pdf-draw-btn[aria-pressed="true"] { background: var(--w-surface); color: var(--w-accent); box-shadow: var(--w-shadow); }
+.pdf-draw-btn:disabled { opacity: 0.35; cursor: default; background: none; }
+.pdf-draw-size span { display: block; border-radius: 50%; background: currentColor; }
+.pdf-draw-swatch { flex: none; width: 22px; height: 22px; margin: 0 3px; padding: 0; border: 0; border-radius: 50%; background: var(--swatch); cursor: pointer; }
+.pdf-draw-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--w-surface), 0 0 0 4px var(--swatch); }
+.pdf-draw-sep { flex: none; width: 1px; height: 20px; margin: 0 5px; background: color-mix(in srgb, var(--w-text) 14%, transparent); }
+.pdf-add-page { flex: none; margin-bottom: 8px; }

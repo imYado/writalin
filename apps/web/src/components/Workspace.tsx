@@ -1,14 +1,17 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BLANK_DRAWING, drawingToSvg, editDrawingWhenShown, formatMediaLine, type EditorCommand, type HostAction } from "@writalin/editor";
-import { WORKSPACE_PATH, REMINDERS_PATH, formatCards, importZip, isScratch, isSystemNote, parseQuiz, taskDate, type CardScope, type QuizQuestion, type WeakDeck, type Vault, type VaultRecord } from "@writalin/vault";
+import { BLANK_DRAWING, drawingToSvg, editDrawingWhenShown, formatMediaLine, startLiveWrite, type EditorCommand, type HostAction } from "@writalin/editor";
+import { WORKSPACE_PATH, REMINDERS_PATH, formatCards, importZip, isScratch, isSystemNote, parseQuiz, splitFrontmatter, taskDate, type CardScope, type QuizQuestion, type WeakDeck, type Vault, type VaultRecord } from "@writalin/vault";
 import { basename, extname, isMarkdown, noteName, type Flashcard, type VaultPath } from "@writalin/shared";
 import {
   ActionGrid, applyTheme, BottomBar, CommandPalette, findTheme, FocusTimer, Icon, toast, useFocusTimer,
   type BarItem, type Command, type GridAction, type IconName, type Theme,
 } from "@writalin/ui";
-import { ActivityWorkspace, CalendarWorkspace, ImageWorkspace, NoteWorkspace, ScratchpadWorkspace, TasksWorkspace, removeWithUndo, useVaultVersion, type WorkspaceAiSource, type WorkspaceProps } from "@writalin/workspaces";
+import { ActivityWorkspace, CalendarWorkspace, ImageWorkspace, NoteWorkspace, ScratchpadWorkspace, TasksWorkspace, blankPdf, removeWithUndo, useVaultVersion, type PdfBoard, type WorkspaceAiSource, type WorkspaceProps } from "@writalin/workspaces";
 import { AiPanel } from "./AiPanel";
 import { AskAiBox, type AskTarget } from "./AskAiBox";
+import { TutorPanel } from "./TutorPanel";
+import { useTutor } from "../useTutor";
+import { renderCardMarkdown } from "../cardMarkdown";
 import { planEdits } from "../aiEdits";
 import { Home } from "./Home";
 import { NotePane, type NotePaneHandle } from "./NotePane";
@@ -49,7 +52,13 @@ interface Layout {
   tabs: Tab[];
   active: string | null;
   leftOpen: boolean;
+  /** How much of the width (height on a phone) the side pane takes, 0.2 to 0.8. */
+  split?: number;
+  /** A tab shown on the right instead of the note (e.g. the tutor's board), by id. */
+  right?: string | null;
 }
+const DEFAULT_SPLIT = 0.465;
+const clampSplit = (f: number) => Math.min(0.8, Math.max(0.2, f));
 
 const TAB_META: Record<TabKind, { label: string; icon: IconName }> = {
   tasks: { label: "Tasks", icon: "checkSquare" },
@@ -124,7 +133,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         const view = ZONES.some((z) => z.id === l.view) || (l.view === "note" && note) ? l.view : "home";
         // Drop tabs whose kind no longer exists (an old graph tab) or whose scratch pad was deleted.
         l.tabs = (l.tabs ?? []).filter((t) => t.kind in TAB_META && (t.kind !== "scratch" || (t.path && vault.files.has(t.path))));
-        setLayout({ ...l, note, view });
+        setLayout({ ...l, note, view, right: l.tabs.some((t) => t.id === l.right) ? l.right : null });
       }
       layoutLoaded.current = true;
     });
@@ -193,7 +202,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         }
         if (opts.newPane) return openTab({ kind: "note", path });
         pane.current?.flush();
-        setLayout((l) => ({ ...l, note: path, view: "note" }));
+        // The note takes the right side back if something else (a board) was there.
+        setLayout((l) => ({ ...l, note: path, view: "note", right: null, tabs: l.right ? l.tabs.filter((t) => !(t.kind === "note" && t.path === path)) : l.tabs }));
         if (opts.heading || opts.line != null) setJump({ heading: opts.heading, line: opts.line, nonce: Date.now() });
         return;
       }
@@ -330,17 +340,17 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     await pane.current?.flush();
     setLayout((l) => {
       const tabs = l.tabs.filter((t) => t.path !== path);
-      return { ...l, note: l.note === path ? null : l.note, view: l.note === path ? "home" : l.view, tabs, active: tabs.some((x) => x.id === l.active) ? l.active : tabs[tabs.length - 1]?.id ?? null };
+      return { ...l, note: l.note === path ? null : l.note, view: l.note === path ? "home" : l.view, tabs, active: tabs.some((x) => x.id === l.active) ? l.active : tabs[tabs.length - 1]?.id ?? null, right: tabs.some((x) => x.id === l.right) ? l.right : null };
     });
     if (isMarkdown(path)) return removeWithUndo(vault, path, `“${noteName(path)}”`, () => vault.delete(path));
     // An imported file (PDF, image…): keep its bytes and highlights so Undo can put it back.
-    const [blob, highlights] = await Promise.all([vault.store.readBinary(path).catch(() => null), vault.pdfHighlights(path).catch(() => [])]);
+    const [blob, highlights, marks] = await Promise.all([vault.store.readBinary(path).catch(() => null), vault.pdfHighlights(path).catch(() => []), vault.pdfMarks(path).catch(() => [])]);
     try {
       await vault.delete(path);
     } catch (e) {
       return toast((e as Error).message, { tone: "warn" });
     }
-    toast(`“${basename(path)}” deleted.`, blob ? { action: { label: "Undo", run: () => void vault.writeBinary(path, blob).then((p) => { if (highlights.length) void vault.setPdfHighlights(p, highlights); }) } } : undefined);
+    toast(`“${basename(path)}” deleted.`, blob ? { action: { label: "Undo", run: () => void vault.writeBinary(path, blob).then((p) => { if (highlights.length) void vault.setPdfHighlights(p, highlights); if (marks.length) void vault.setPdfMarks(p, marks); }) } } : undefined);
   }, [vault]);
 
   const hostAction = useRef<(a: HostAction) => void>(() => {});
@@ -520,13 +530,129 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
 
   // ----- dock -----
   const ed = () => pane.current?.editor;
-  const noNote = !layout.note || layout.view !== "note";
+  /** The tab on the right instead of the note, and the tabs left for the side pane. */
+  const rightTab = layout.right ? layout.tabs.find((t) => t.id === layout.right) : undefined;
+  const leftTabs = rightTab ? layout.tabs.filter((t) => t.id !== rightTab.id) : layout.tabs;
+  const activeTab = leftTabs.find((t) => t.id === layout.active) ?? leftTabs[leftTabs.length - 1];
+  const showLeft = layout.leftOpen && leftTabs.length > 0 && layout.view === "note";
+  const noNote = !layout.note || layout.view !== "note" || !!rightTab;
+
+  // ----- the tutor and its board -----
+  /** PDFs on screen that the tutor can write on, by tab. */
+  const boards = useRef(new Map<string, PdfBoard>());
+  const [, setBoardsChanged] = useState(0);
+  const boardSetters = useRef(new Map<string, (b: PdfBoard | null) => void>());
+  const registerBoardFor = (tabId: string) => {
+    let set = boardSetters.current.get(tabId);
+    if (!set) {
+      set = (b) => {
+        if (b) boards.current.set(tabId, b);
+        else boards.current.delete(tabId);
+        setBoardsChanged((n) => n + 1);
+      };
+      boardSetters.current.set(tabId, set);
+    }
+    return set;
+  };
+  /** The PDF the tutor works on: the one on the right, else the one open in the side pane. */
+  const currentBoard = (): PdfBoard | null =>
+    (rightTab?.kind === "pdf" && boards.current.get(rightTab.id)) || (showLeft && activeTab?.kind === "pdf" && boards.current.get(activeTab.id)) || null;
+  /** Put a tab on the right, where the note usually is; the note stays at hand as a tab in the side pane. */
+  const moveRight = (tabId: string) =>
+    setLayout((l) => {
+      let tabs = l.tabs;
+      let active = l.active === tabId ? null : l.active;
+      const left = tabs.filter((t) => t.id !== tabId);
+      if (l.note && !left.some((t) => t.kind === "note" && t.path === l.note)) {
+        const id = `note:${l.note}:${Date.now()}`;
+        tabs = [...tabs, { id, kind: "note", path: l.note }];
+        // With nothing else beside it, the note is what shows on the left.
+        if (!left.length) active = id;
+      }
+      active ??= tabs.filter((t) => t.id !== tabId).slice(-1)[0]?.id ?? null;
+      return { ...l, tabs, active, right: tabId, leftOpen: true, view: "note" };
+    });
+  /** Give the right side back to the note; the tab that was there goes to the side pane. */
+  const moveLeft = () => {
+    pane.current?.flush();
+    setLayout((l) => ({ ...l, right: null, active: l.right ?? l.active, tabs: l.tabs.filter((t) => !(t.kind === "note" && t.path === l.note)) }));
+  };
+  const newBlankPdf = async () => {
+    const d = new Date();
+    const stamp = `${d.toISOString().slice(0, 10)} ${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
+    return vault.writeBinary(`${settings.attachmentsFolder}/Blank ${stamp}.pdf`, new Blob([blankPdf(1) as BlobPart], { type: "application/pdf" }));
+  };
+  /** Make an empty PDF and open it on the right as the tutor's board. Resolves once it can be written on. */
+  const openBlankBoard = async (): Promise<PdfBoard | null> => {
+    let path: VaultPath;
+    try {
+      path = await newBlankPdf();
+    } catch {
+      toast("Couldn't make a blank PDF. Try again.", { tone: "warn" });
+      return null;
+    }
+    const id = `pdf:${path}:${Date.now()}`;
+    setLayout((l) => ({ ...l, tabs: [...l.tabs, { id, kind: "pdf", path }] }));
+    moveRight(id);
+    for (let i = 0; i < 80; i++) {
+      const b = boards.current.get(id);
+      if (b) return b;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return null;
+  };
+  const tutor = useTutor({
+    board: async () => currentBoard() ?? (await openBlankBoard()),
+    material: async (board, question) => {
+      // The PDF being studied in the side pane, when it isn't the board itself.
+      if (showLeft && wsAi && activeTab?.kind === "pdf" && activeTab.path !== board.path) {
+        const src = await wsAi.build("page", question);
+        if (src?.text.trim()) return { text: src.text, label: src.label };
+      }
+      const open = pane.current?.editor?.view?.state.doc.toString();
+      if (open?.trim() && layout.note) return { text: open, label: `your note “${noteName(layout.note)}”` };
+      if (showLeft && activeTab?.kind === "note" && activeTab.path) {
+        const text = splitFrontmatter((await vault.read(activeTab.path).catch(() => null))?.text ?? "").body;
+        if (text.trim()) return { text, label: `your note “${noteName(activeTab.path)}”` };
+      }
+      return null;
+    },
+  });
+  /** The AI panel helps with the note, or teaches at the board. */
+  const [aiMode, setAiMode] = useState<"write" | "tutor">("write");
+  const studyLabel = (() => {
+    const b = currentBoard();
+    if (showLeft && wsAi && activeTab?.kind === "pdf" && activeTab.path !== b?.path) return `“${wsAi.name}”`;
+    if (!noNote && layout.note) return `your note “${noteName(layout.note)}”`;
+    if (showLeft && activeTab?.kind === "note" && activeTab.path) return `your note “${noteName(activeTab.path)}”`;
+    return null;
+  })();
   const bar: BarItem[] = [
     {
       id: "ai",
       label: "AI",
       icon: "sparkle",
+      // The tutor's chat stays open beside the board, on the side the board isn't.
+      stay: aiMode === "tutor",
+      panelClass: aiMode === "tutor" ? `tutor-panel ${rightTab?.kind === "pdf" || !showLeft ? "tutor-panel-left" : "tutor-panel-right"}` : undefined,
       panel: () => (
+        <>
+        <div className="ai-modes" role="tablist" aria-label="AI mode">
+          <button role="tab" aria-selected={aiMode === "write"} onClick={() => setAiMode("write")}><Icon name="sparkle" size={14} /> Assistant</button>
+          <button role="tab" aria-selected={aiMode === "tutor"} onClick={() => setAiMode("tutor")}><Icon name="tutor" size={14} /> Tutor</button>
+        </div>
+        {aiMode === "tutor" ? (
+          <TutorPanel
+            vault={vault}
+            account={account}
+            tutor={tutor}
+            boardName={currentBoard()?.name ?? null}
+            boardBlank={currentBoard()?.blank ?? true}
+            reading={studyLabel}
+            onNewBoard={() => void openBlankBoard()}
+            onOpenSettings={() => { setDockOpen(null); setSettingsOpen("ai"); }}
+          />
+        ) : (
         <AiPanel
           vault={vault}
           account={account}
@@ -554,6 +680,13 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             setDockOpen(null);
           }}
           undo={() => ed()?.run("undo")}
+          live={() => {
+            const v = ed()?.view;
+            if (!v) return null;
+            // After the selection, where the finished answer will go.
+            v.dispatch({ selection: { anchor: v.state.selection.main.to } });
+            return startLiveWrite(v);
+          }}
           openSource={(path, line) => void openPath(path, { line })}
           suggestEdits={(edits, range, summary) => {
             const e = ed();
@@ -573,6 +706,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           onStudy={(cards) => setStudy({ cards, title: "Study the new cards" })}
           onPlayQuiz={(questions) => setQuiz({ questions, title: "Quiz" })}
         />
+        )}
+        </>
       ),
     },
     {
@@ -727,14 +862,14 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     quality,
     askAi: (tool, source) => askAi(tool, source),
     registerAiSource: setWsAi,
+    renderText: renderCardMarkdown,
     openAi: (scope) => {
       setAiFocus({ scope: scope ?? "page", nonce: Date.now() });
       setDockOpen("ai");
     },
   };
-  const activeTab = layout.tabs.find((t) => t.id === layout.active) ?? layout.tabs[layout.tabs.length - 1];
-
-  const renderTab = (t: Tab) => {
+  /** A tab's contents. Only the side pane's PDF is what the AI panel reads; any PDF can be the tutor's board. */
+  const renderTab = (t: Tab, side: "left" | "right" = "left") => {
     switch (t.kind) {
       case "tasks": return <TasksWorkspace {...wsProps} focusAdd={t.focus} />;
       case "calendar": return <CalendarWorkspace {...wsProps} />;
@@ -744,7 +879,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       case "pdf":
         return (
           <Suspense fallback={<div className="ws ws-loading">Loading PDF viewer…</div>}>
-            <PdfWorkspace {...wsProps} path={t.path!} page={t.page} />
+            <PdfWorkspace key={t.id} {...wsProps} registerAiSource={side === "left" ? setWsAi : undefined} openAi={side === "left" ? wsProps.openAi : undefined} path={t.path!} page={t.page} registerBoard={registerBoardFor(t.id)} />
           </Suspense>
         );
     }
@@ -752,16 +887,20 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
 
   const closeTab = (id: string) =>
     setLayout((l) => {
-      const tabs = l.tabs.filter((x) => x.id !== id);
-      return { ...l, tabs, active: tabs[tabs.length - 1]?.id ?? null, leftOpen: tabs.length > 0 && l.leftOpen };
+      let tabs = l.tabs.filter((x) => x.id !== id);
+      // Closing what was on the right gives the right side back to the note.
+      const right = l.right === id ? null : l.right;
+      if (l.right === id) tabs = tabs.filter((t) => !(t.kind === "note" && t.path === l.note));
+      const left = tabs.filter((x) => x.id !== right);
+      return { ...l, tabs, right, active: left.some((x) => x.id === l.active) ? l.active : left[left.length - 1]?.id ?? null, leftOpen: left.length > 0 && l.leftOpen };
     });
 
-  const showLeft = layout.leftOpen && layout.tabs.length > 0 && layout.view === "note";
   const adder = {
     vault,
     onTasks: (focus: boolean) => openTab({ kind: "tasks", focus: focus ? Date.now() : undefined }),
     onCalendar: () => openTab({ kind: "calendar" }),
     onPdf: (path?: VaultPath) => (path ? openTab({ kind: "pdf", path }) : pdfInput.current?.click()),
+    onBlankPdf: () => void newBlankPdf().then((path) => openTab({ kind: "pdf", path }), () => toast("Couldn't make a blank PDF. Try again.", { tone: "warn" })),
     onScratch: (path?: VaultPath) => (path ? openTab({ kind: "scratch", path }) : void openScratch("new")),
     onDeleteScratch: (path: VaultPath) => {
       setLayout((l) => {
@@ -846,7 +985,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             )}
             {zone === "note" && (
               <>
-                {layout.tabs.length ? (
+                {leftTabs.length ? (
                   <button className="w-icon-btn" aria-pressed={showLeft} onClick={() => setLayout((l) => ({ ...l, leftOpen: !l.leftOpen }))} aria-label="Side pane" title="Side pane: PDFs, tasks, calendar">
                     <Icon name="split" />
                   </button>
@@ -891,12 +1030,15 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           {zone === "calendar" && <div className="zone-full"><CalendarWorkspace {...wsProps} standalone focusDate={calFocus} /></div>}
           {zone === "activity" && <ActivityWorkspace {...wsProps} />}
           {zone === "note" && layout.note && (
-            <div className={`split${showLeft ? " split-open" : ""}`}>
+            <div
+              className={`split${showLeft ? " split-open" : ""}${dockOpen === "ai" && aiMode === "tutor" ? ` split-lesson${rightTab?.kind === "pdf" ? " split-board-first" : ""}` : ""}`}
+              style={showLeft ? splitStyle(layout.split ?? DEFAULT_SPLIT) : undefined}
+            >
               {showLeft && (
                 <section className="left-pane" aria-label="Side pane">
                   <div className="tabs-row">
                   <div className="tabs" role="tablist">
-                    {layout.tabs.map((t) => (
+                    {leftTabs.map((t) => (
                       <div key={t.id} className={`tab${t.id === activeTab?.id ? " active" : ""}`} role="presentation">
                         <button role="tab" aria-selected={t.id === activeTab?.id} onClick={() => setLayout((l) => ({ ...l, active: t.id }))}>
                           <Icon name={TAB_META[t.kind].icon} size={14} />
@@ -912,11 +1054,38 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
                       </div>
                     ))}
                   </div>
+                  {activeTab && (activeTab.kind === "pdf" || activeTab.kind === "image") && (
+                    <button className="w-icon-btn" aria-label="Move to the right side" title="Show this on the right side, with your note here" onClick={() => moveRight(activeTab.id)}>
+                      <Icon name="arrowRight" size={16} />
+                    </button>
+                  )}
                   <TabAdder {...adder} />
                   </div>
                   <div className="tab-body">{activeTab && renderTab(activeTab)}</div>
                 </section>
               )}
+              {showLeft && <SplitHandle value={layout.split ?? DEFAULT_SPLIT} onChange={(split) => setLayout((l) => ({ ...l, split }))} />}
+              {rightTab ? (
+                <section className="right-pane right-tab" aria-label={rightTab.path ? basename(rightTab.path) : TAB_META[rightTab.kind].label}>
+                  <div className="tabs-row">
+                    <button className="w-icon-btn" aria-label="Move to the left side" title="Move this to the side pane and show your note here" onClick={moveLeft}>
+                      <Icon name="arrowLeft" size={16} />
+                    </button>
+                    <div className="tabs">
+                      <div className="tab active" role="presentation">
+                        <button tabIndex={-1}>
+                          <Icon name={TAB_META[rightTab.kind].icon} size={14} />
+                          <span>{rightTab.path ? noteName(rightTab.path) : TAB_META[rightTab.kind].label}</span>
+                        </button>
+                        <button className="tab-close" aria-label={`Close ${rightTab.path ? basename(rightTab.path) : TAB_META[rightTab.kind].label}`} title="Close and show your note" onClick={() => closeTab(rightTab.id)}>
+                          <Icon name="close" size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="tab-body">{renderTab(rightTab, "right")}</div>
+                </section>
+              ) : (
               <section className="right-pane" aria-label="Note">
                 <NotePane
                   ref={pane}
@@ -940,6 +1109,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
                   }}
                 />
               </section>
+              )}
             </div>
           )}
         </main>
@@ -1013,12 +1183,14 @@ function findThemes(custom: Theme[]): Theme[] {
 }
 
 /** The side pane's + menu: add a task, open Tasks or Calendar, or a scratch pad (new or existing). */
-function TabAdder({ vault, onTasks, onCalendar, onPdf, onScratch, onDeleteScratch, onDeleteFile, trigger }: {
+function TabAdder({ vault, onTasks, onCalendar, onPdf, onBlankPdf, onScratch, onDeleteScratch, onDeleteFile, trigger }: {
   vault: Vault;
   onTasks: (focusAdd: boolean) => void;
   onCalendar: () => void;
   /** Open this PDF beside the note, or with no path, upload one. */
   onPdf: (path?: VaultPath) => void;
+  /** Make an empty PDF to draw and write on. */
+  onBlankPdf: () => void;
   onScratch: (path?: VaultPath) => void;
   onDeleteScratch: (path: VaultPath) => void;
   /** Delete an imported file (a PDF). */
@@ -1058,6 +1230,10 @@ function TabAdder({ vault, onTasks, onCalendar, onPdf, onScratch, onDeleteScratc
           <button className="w-action" role="menuitem" onClick={pick(() => onPdf())}>
             <Icon name="pdf" size={16} />
             <span className="w-action-text"><span className="w-action-label">PDF</span><span className="w-action-desc">Upload one to read here</span></span>
+          </button>
+          <button className="w-action" role="menuitem" onClick={pick(onBlankPdf)}>
+            <Icon name="pencil" size={16} />
+            <span className="w-action-text"><span className="w-action-label">Blank PDF</span><span className="w-action-desc">Empty pages to draw and write on</span></span>
           </button>
           {pdfs.length > 0 && (
             <>
@@ -1109,6 +1285,68 @@ function TabAdder({ vault, onTasks, onCalendar, onPdf, onScratch, onDeleteScratc
         </div>
       )}
     </div>
+  );
+}
+
+const splitStyle = (f: number) => ({ "--split-a": `${f}fr`, "--split-b": `${1 - f}fr` }) as React.CSSProperties;
+
+/**
+ * The border between the side pane and the note. Drag it (or use the arrow
+ * keys) to give one side more room; double-click puts it back. On a phone
+ * the panes are stacked, so it moves up and down.
+ */
+function SplitHandle({ value, onChange }: { value: number; onChange: (f: number) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const stacked = () => matchMedia("(max-width: 860px)").matches;
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = ref.current;
+    const box = el?.parentElement;
+    if (!el || !box) return;
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    el.classList.add("dragging");
+    document.body.classList.add("split-dragging");
+    let f = value;
+    const move = (ev: PointerEvent) => {
+      const r = box.getBoundingClientRect();
+      f = clampSplit(stacked() ? (ev.clientY - r.top) / r.height : (ev.clientX - r.left) / r.width);
+      // Straight onto the element while dragging, so the panes follow the pointer without re-rendering.
+      box.style.setProperty("--split-a", `${f}fr`);
+      box.style.setProperty("--split-b", `${1 - f}fr`);
+    };
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+      el.classList.remove("dragging");
+      document.body.classList.remove("split-dragging");
+      onChange(f);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+  };
+  return (
+    <div
+      ref={ref}
+      className="split-handle"
+      role="separator"
+      tabIndex={0}
+      aria-label="Resize the two sides"
+      aria-valuemin={20}
+      aria-valuemax={80}
+      aria-valuenow={Math.round(value * 100)}
+      title="Drag to resize. Double-click to reset."
+      onPointerDown={onPointerDown}
+      onDoubleClick={() => onChange(DEFAULT_SPLIT)}
+      onKeyDown={(e) => {
+        const back = e.key === "ArrowLeft" || e.key === "ArrowUp";
+        const forward = e.key === "ArrowRight" || e.key === "ArrowDown";
+        if (!back && !forward) return;
+        e.preventDefault();
+        onChange(clampSplit(value + (forward ? 0.03 : -0.03)));
+      }}
+    />
   );
 }
 

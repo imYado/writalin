@@ -28,6 +28,28 @@ export interface PdfHighlight {
   created: string;
 }
 
+export const PDF_MARKS_PATH = ".writalin/pdf-marks.json";
+
+/**
+ * Something drawn, typed or placed on a PDF page, by the person or the AI.
+ * Positions are in page units: the page is 100 units wide, `(0, 0)` is its
+ * top-left corner and `y` grows downward by the same unit.
+ */
+export type PdfMark = {
+  id: string;
+  /** 1-based. */
+  page: number;
+  color: string;
+  /** Line thickness, or the height of the text, in page units. */
+  size: number;
+} & (
+  | { kind: "stroke"; points: [number, number][]; /** 1 for a pen, lower for a highlighter. */ opacity: number }
+  | { kind: "line" | "arrow" | "rect" | "ellipse"; x1: number; y1: number; x2: number; y2: number }
+  /** A filled box: a see-through highlight, or a white cover over printed text. */
+  | { kind: "box"; x1: number; y1: number; x2: number; y2: number; fill: "highlight" | "cover" }
+  | { kind: "text"; x: number; y: number; /** Width to wrap at; unset grows with the text. */ w?: number; text: string; /** A pale note behind the text, so it reads over print. */ note?: boolean }
+);
+
 export type VaultEvent =
   | { type: "indexed" }
   | { type: "changed"; path: VaultPath; external: boolean }
@@ -287,6 +309,16 @@ export class Vault {
     return path;
   }
 
+  /** Write over a file that isn't a note (a PDF, an image) with new contents. */
+  async replaceBinary(path: VaultPath, data: Blob): Promise<void> {
+    path = normalizePath(path);
+    const isNew = !this.files.has(path);
+    const stat = await this.store.write(path, data);
+    this.files.set(path, stat);
+    this.known.set(path, stat.mtime);
+    this.events.emit(isNew ? { type: "created", path } : { type: "changed", path, external: false });
+  }
+
   /** Same path with " 1", " 2"… appended until it doesn't exist. */
   uniquePath(path: VaultPath): VaultPath {
     if (!this.files.has(path)) return path;
@@ -398,6 +430,28 @@ export class Vault {
     return p;
   }
   private highlightWrites: Promise<void> = Promise.resolve();
+
+  // ---------- PDF drawings, shapes and text ----------
+
+  async pdfMarks(path: VaultPath): Promise<PdfMark[]> {
+    await this.markWrites;
+    return (await this.readJson<Record<string, PdfMark[]>>(PDF_MARKS_PATH))?.[path] ?? [];
+  }
+
+  /** Replace everything drawn or typed on one PDF. Writes run one at a time. */
+  setPdfMarks(path: VaultPath, list: PdfMark[]): Promise<void> {
+    const run = async () => {
+      const all = (await this.readJson<Record<string, PdfMark[]>>(PDF_MARKS_PATH).catch(() => null)) ?? {};
+      if (!list.length && !all[path]) return;
+      if (list.length) all[path] = list;
+      else delete all[path];
+      await this.writeJson(PDF_MARKS_PATH, all);
+    };
+    const p = this.markWrites.then(run, run);
+    this.markWrites = p.catch(() => {});
+    return p;
+  }
+  private markWrites: Promise<void> = Promise.resolve();
 
   // ---------- links ----------
 

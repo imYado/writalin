@@ -9,6 +9,10 @@ export interface BarItem {
   /** Content shown in a panel above the dock. Receives a close callback. */
   panel?: (close: () => void) => ReactNode;
   active?: boolean;
+  /** Extra class on the panel, e.g. to sit it to one side. */
+  panelClass?: string;
+  /** Keep the panel open while the page behind it is used (a chat beside the work). */
+  stay?: boolean;
 }
 
 /** One calm dock at the bottom. Panels open upward, one at a time. */
@@ -32,7 +36,8 @@ export function BottomBar({ items, compact = false, openId: controlled, onOpenCh
     // A window opened from the panel (a quiz, a study session) sits on top of
     // it; using or closing that window shouldn't close the panel underneath.
     const inModal = (t: EventTarget | null) => t instanceof Element && !!t.closest(".w-overlay");
-    const onDown = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && !inModal(e.target) && setOpenId(null);
+    const stay = items.find((i) => i.id === openId)?.stay;
+    const onDown = (e: MouseEvent) => !stay && !ref.current?.contains(e.target as Node) && !inModal(e.target) && setOpenId(null);
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && !document.querySelector(".w-overlay") && setOpenId(null);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -40,12 +45,14 @@ export function BottomBar({ items, compact = false, openId: controlled, onOpenCh
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [openId]);
+    // Re-read when the open panel changes how it behaves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId, items.find((i) => i.id === openId)?.stay]);
   const open = items.find((i) => i.id === openId);
   return (
     <nav className={`w-dock${compact ? " w-dock-compact" : ""}`} aria-label="Main" ref={ref}>
       {open?.panel && (
-        <div className="w-dock-panel" role="dialog" aria-label={open.label}>
+        <div className={`w-dock-panel${open.panelClass ? ` ${open.panelClass}` : ""}`} role="dialog" aria-label={open.label}>
           {open.panel(() => setOpenId(null))}
         </div>
       )}

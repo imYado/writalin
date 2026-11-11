@@ -1,17 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { VaultPath } from "@writalin/shared";
 import { basename } from "@writalin/shared";
-import { pdfQuote, type PdfHighlight } from "@writalin/vault";
+import { pdfQuote, type PdfHighlight, type PdfMark } from "@writalin/vault";
 import { Icon, toast } from "@writalin/ui";
-import type { AiSourceText, WorkspaceProps } from "./types";
+import type { AiSourceText, BoardOp, BoardTextSize, PdfBoard, WorkspaceProps } from "./types";
 import { loadPdf, type PdfDoc } from "./pdf";
+import { blankPdf } from "./pdfBlank";
+import { MARK_COLORS, MarkLayer, MarkToolbar, PEN_SIZES, markBottom, markLength, newMarkId, primeMarkHtml, type MarkLayerProps, type MarkLive, type MarkTool } from "./pdfMarks";
 import { pickRelevant } from "./relevance";
 
 interface Props extends WorkspaceProps {
   path: VaultPath;
   /** 1-based page to open at (from a `#page=N` link). */
   page?: number;
+  /** Offer this PDF to the AI tutor as a board to write and draw on; null takes it back. */
+  registerBoard?: (board: PdfBoard | null) => void;
 }
+
+/** Colours the AI may name, mapped onto the pen colours. */
+const BOARD_COLORS: Record<string, string> = {
+  black: MARK_COLORS[0]!, red: MARK_COLORS[1]!, blue: MARK_COLORS[2]!, green: MARK_COLORS[3]!, purple: MARK_COLORS[4]!,
+  yellow: MARK_COLORS[5]!, orange: MARK_COLORS[5]!,
+};
+const boardColor = (name: string | undefined, fallback = MARK_COLORS[0]!) => (name && BOARD_COLORS[name.toLowerCase()]) || fallback;
+const BOARD_TEXT: Record<BoardTextSize, number> = { s: 1.9, m: 2.5, l: 3.4, xl: 4.6 };
+/** Margins the AI's writing keeps to, in page units. */
+const BOARD_MARGIN = 8;
+const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+const r1 = (n: number) => Math.round(n * 10) / 10;
 
 /**
  * PDF viewer on PDF.js: lazy page rendering, text selection, search, zoom,
@@ -75,7 +91,7 @@ export function formatPages(pages: number[]): string {
   return out.join(", ");
 }
 
-export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, quality, currentNote, askAi, registerAiSource, openAi }: Props) {
+export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, quality, currentNote, askAi, registerAiSource, openAi, renderText, registerBoard }: Props) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -92,6 +108,113 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   const scroller = useRef<HTMLDivElement>(null);
   /** Pages ticked in "Choose pages" mode; null when not choosing. */
   const [picked, setPicked] = useState<Set<number> | null>(null);
+  /** Bumped to read the file again after pages were added to it. */
+  const [rev, setRev] = useState(0);
+
+  // ----- drawing, shapes and text on the pages -----
+  const [marks, setMarks] = useState<PdfMark[]>([]);
+  const marksNow = useRef<PdfMark[]>([]);
+  /** The drawing tool in hand; null while reading. */
+  const [tool, setTool] = useState<MarkTool | null>(null);
+  const [color, setColor] = useState(MARK_COLORS[0]!);
+  const [sizeIndex, setSizeIndex] = useState(1);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  /** Marks being drawn or typed out right now (the AI at work). */
+  const [live, setLive] = useState<Record<string, MarkLive>>({});
+  const undoStack = useRef<PdfMark[][]>([]);
+  const [undoable, setUndoable] = useState(0);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveMarksNow = useCallback(() => {
+    if (!saveTimer.current) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    // A text box that is still empty isn't kept.
+    void vault.setPdfMarks(path, marksNow.current.filter((m) => m.kind !== "text" || m.text.trim())).catch(() => toast("Couldn't save what you drew. Try again.", { tone: "warn" }));
+  }, [vault, path]);
+  /** Change what's on the pages; saved a moment later. */
+  const commitMarks = useCallback((next: PdfMark[], opts: { undo?: boolean } = {}) => {
+    if (opts.undo !== false) {
+      undoStack.current.push(marksNow.current);
+      if (undoStack.current.length > 100) undoStack.current.shift();
+      setUndoable(undoStack.current.length);
+    }
+    marksNow.current = next;
+    setMarks(next);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(saveMarksNow, 500);
+  }, [saveMarksNow]);
+  useEffect(() => {
+    let alive = true;
+    marksNow.current = [];
+    setMarks([]);
+    undoStack.current = [];
+    setUndoable(0);
+    setSelected(null);
+    setEditing(null);
+    void vault.pdfMarks(path).then((m) => {
+      if (!alive) return;
+      marksNow.current = m;
+      setMarks(m);
+    }).catch(() => {});
+    return () => {
+      alive = false;
+      saveMarksNow();
+    };
+  }, [vault, path, saveMarksNow]);
+  const undoMark = useCallback(() => {
+    const prev = undoStack.current.pop();
+    if (!prev) return;
+    setUndoable(undoStack.current.length);
+    setSelected(null);
+    setEditing(null);
+    commitMarks(prev, { undo: false });
+  }, [commitMarks]);
+  const removeMark = useCallback((id: string) => {
+    const m = marksNow.current.find((x) => x.id === id);
+    if (!m) return;
+    // A text box left empty just goes away, with nothing to undo.
+    commitMarks(marksNow.current.filter((x) => x.id !== id), { undo: !(m.kind === "text" && !m.text.trim()) });
+    setSelected((cur) => (cur === id ? null : cur));
+  }, [commitMarks]);
+  const markLayer: MarkLayerProps = {
+    tool,
+    color,
+    sizeIndex,
+    selected,
+    editing,
+    live,
+    render: renderText,
+    onAdd: (m, opts) => {
+      commitMarks([...marksNow.current, m]);
+      if (opts?.edit) setEditing(m.id);
+    },
+    onChange: (m) => {
+      const before = marksNow.current.find((x) => x.id === m.id);
+      // Typing into a new text box is one step with making it.
+      commitMarks(marksNow.current.map((x) => (x.id === m.id ? m : x)), { undo: !(before?.kind === "text" && !before.text.trim()) });
+    },
+    onRemove: removeMark,
+    onSelect: setSelected,
+    onEdit: setEditing,
+  };
+  // While drawing: Delete removes what's picked, Ctrl+Z undoes.
+  useEffect(() => {
+    if (!tool) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("input, textarea, [contenteditable='true'], .cm-editor")) return;
+      if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+        e.preventDefault();
+        removeMark(selected);
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undoMark();
+      } else if (e.key === "Escape") setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tool, selected, removeMark, undoMark]);
 
 
   const link = (p?: number) => `${path.replace(/ /g, "%20")}${p ? `#page=${p}` : ""}`;
@@ -238,31 +361,52 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   }, [registerAiSource, doc, path, page, picked, sel, hits, hitsFor]);
   useEffect(() => () => registerAiSource?.(null), [registerAiSource]);
 
+  const docNow = useRef<PdfDoc | null>(null);
+  const loadedPath = useRef<string | null>(null);
+  /** Told when the file has been read again (after a page was added). */
+  const onReload = useRef<(() => void) | null>(null);
   useEffect(() => {
     let alive = true;
-    let loaded: PdfDoc | null = null;
-    setDoc(null);
-    setError(null);
+    // Reading the same file again (a page was added) keeps the pages on screen meanwhile.
+    const fresh = loadedPath.current !== path;
+    loadedPath.current = path;
+    if (fresh) {
+      setDoc(null);
+      setError(null);
+    }
     void (async () => {
       try {
         const blob = await vault.store.readBinary(path);
-        loaded = await loadPdf(await blob.arrayBuffer());
+        const loaded = await loadPdf(await blob.arrayBuffer());
         if (!alive) return void loaded.destroy();
-        // Start at "fit width" when the page is wider than the pane, e.g. on a phone.
-        const room = (scroller.current?.clientWidth ?? 0) - 32;
-        const { w } = await loaded.pageSize(1);
-        if (room > 0 && w > room) setZoom(Math.max(0.3, Math.floor((room / w) * 100) / 100));
-        if (alive) setDoc(loaded);
-        else void loaded.destroy();
+        if (fresh) {
+          // Start at "fit width" when the page is wider than the pane, e.g. on a phone.
+          const room = (scroller.current?.clientWidth ?? 0) - 32;
+          const { w } = await loaded.pageSize(1);
+          if (room > 0 && w > room) setZoom(Math.max(0.3, Math.floor((room / w) * 100) / 100));
+          if (!alive) return void loaded.destroy();
+        }
+        const old = docNow.current;
+        docNow.current = loaded;
+        setDoc(loaded);
+        void old?.destroy();
+        onReload.current?.();
       } catch (e) {
         if (alive) setError((e as Error).message || "Couldn't open this PDF.");
       }
     })();
     return () => {
       alive = false;
-      void loaded?.destroy();
     };
-  }, [vault, path]);
+  }, [vault, path, rev]);
+  useEffect(
+    () => () => {
+      void docNow.current?.destroy();
+      docNow.current = null;
+      loadedPath.current = null;
+    },
+    [vault, path],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -286,7 +430,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   };
   /** A click on highlighted text (with nothing selected) opens that highlight's menu. */
   const onPagesClick = (e: React.MouseEvent) => {
-    if (window.getSelection()?.toString().trim()) return;
+    if (tool || window.getSelection()?.toString().trim()) return;
     const pageEl = (e.target as Element).closest?.<HTMLElement>("[data-page]");
     if (!pageEl) return setActiveHl(null);
     const n = Number(pageEl.dataset.page);
@@ -351,6 +495,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   }, [doc, zoom, trackPage]);
 
   const onMouseUp = () => {
+    if (tool) return;
     const s = window.getSelection();
     const text = s?.toString().replace(/\s+\n/g, "\n").trim() ?? "";
     if (!s || !text) return setSel(null);
@@ -363,6 +508,287 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     setActiveHl(null);
     setSel({ text, page: Number(pageEl.dataset.page), x: rect.left - host.left + rect.width / 2, y: rect.top - host.top + scroller.current!.scrollTop, rects: selectionRects(range, pageEl) });
   };
+
+  /** Add an empty page to the end of a blank PDF. Resolves with its number once it's on screen. */
+  const addPage = async (): Promise<number | null> => {
+    const d = docNow.current;
+    if (!d?.blank) return null;
+    const n = d.numPages + 1;
+    try {
+      await vault.replaceBinary(path, new Blob([blankPdf(n) as BlobPart], { type: "application/pdf" }));
+    } catch {
+      toast("Couldn't add a page. Try again.", { tone: "warn" });
+      return null;
+    }
+    await new Promise<void>((done) => {
+      const t = setTimeout(done, 5000);
+      onReload.current = () => {
+        clearTimeout(t);
+        onReload.current = null;
+        done();
+      };
+      setRev((r) => r + 1);
+    });
+    // Let the new page lay out before anything is written on it.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return docNow.current?.numPages === n ? n : null;
+  };
+
+  // ----- the AI at the board -----
+  /** Where the AI's writing carries on: the page, how far down, and the figure being drawn. */
+  const pen = useRef<{ page: number; y: number; fig: { y0: number; h: number } | null } | null>(null);
+  const hurried = useRef(false);
+  const pageEl = (n: number) => scroller.current?.querySelector<HTMLElement>(`[data-page="${n}"]`) ?? null;
+  /** A page's height in page units (it is 100 wide). */
+  const pageUnits = (n: number) => {
+    const el = pageEl(n);
+    return el && el.offsetWidth ? (el.offsetHeight / el.offsetWidth) * 100 : 141.4;
+  };
+  /** How far down a page its marks reach, measuring text as it is shown (it wraps). */
+  const lowestMark = (n: number) => {
+    let low = 0;
+    const el = pageEl(n);
+    const box = el?.getBoundingClientRect();
+    for (const m of marksNow.current) {
+      if (m.page !== n) continue;
+      const shown = m.kind === "text" && box?.width ? el!.parentElement?.querySelector<HTMLElement>(`.pdf-mark-text[data-mark-id="${m.id}"]`) : null;
+      low = Math.max(low, shown ? (shown.getBoundingClientRect().bottom - box!.top) / (box!.width / 100) : markBottom(m));
+    }
+    return low;
+  };
+  const wait = (ms: number) => (hurried.current ? Promise.resolve() : new Promise<void>((r) => setTimeout(r, ms)));
+  /** Bring a spot on a page into view, so the work can be watched. */
+  const follow = (n: number, y: number) => {
+    const root = scroller.current;
+    const el = pageEl(n);
+    if (!root || !el) return;
+    const at = el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop + y * (el.offsetWidth / 100);
+    if (at < root.scrollTop + 30 || at > root.scrollTop + root.clientHeight * 0.72) root.scrollTo({ top: Math.max(0, at - root.clientHeight * 0.4), behavior: hurried.current ? "auto" : "smooth" });
+  };
+  /** Put a mark on the page the way a hand would: lines drawn along their length, text typed out. */
+  const drawLive = async (m: PdfMark) => {
+    const setFor = (v: MarkLive | null) =>
+      setLive((l) => {
+        const next = { ...l };
+        if (v) next[m.id] = v;
+        else delete next[m.id];
+        return next;
+      });
+    if (m.kind === "text") {
+      await primeMarkHtml(m.text, renderText);
+      setFor({ typed: 0 });
+      commitMarks([...marksNow.current, m], { undo: false });
+      follow(m.page, m.y);
+      const total = m.text.length;
+      const ms = clamp(total * 22, 250, 2200);
+      const start = performance.now();
+      while (!hurried.current) {
+        await new Promise((r) => requestAnimationFrame(r));
+        const typed = Math.floor(((performance.now() - start) / ms) * total);
+        if (typed >= total) break;
+        setFor({ typed });
+      }
+      setFor(null);
+      // One frame for the finished text (with its formatting) to lay out, so it can be measured.
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return;
+    }
+    const ms = m.kind === "box" ? 260 : clamp(markLength(m) * 14, 260, 1000);
+    setFor({ draw: ms });
+    commitMarks([...marksNow.current, m], { undo: false });
+    follow(m.page, markBottom(m));
+    await wait(ms);
+    setFor(null);
+  };
+  const board: PdfBoard = {
+    path,
+    name: basename(path),
+    blank: !!doc?.blank,
+    begin() {
+      const d = docNow.current;
+      if (!d) return;
+      hurried.current = false;
+      let p = page;
+      // An empty PDF is one long board: carry on after the last thing on it, unless a later page is in view.
+      if (d.blank) p = Math.max(p, marksNow.current.reduce((last, m) => Math.max(last, m.page), 1));
+      p = clamp(p, 1, d.numPages);
+      const low = lowestMark(p);
+      pen.current = { page: p, y: low ? low + 2.2 : BOARD_MARGIN, fig: null };
+    },
+    async describe() {
+      const d = docNow.current;
+      if (!d) return "";
+      if (!pen.current) board.begin();
+      const { page: p, y } = pen.current!;
+      const high = r1(pageUnits(p));
+      const out: string[] = [];
+      const on = marksNow.current.filter((m) => m.page === p);
+      const texts = on.filter((m) => m.kind === "text").slice(-30);
+      const drawn = on.length - on.filter((m) => m.kind === "text").length;
+      if (d.blank) {
+        out.push(`The board is an empty page, 100 wide and ${high} tall. It is page ${p} of ${d.numPages}; a new page is added when you need one.`);
+        out.push(on.length ? `Already on this page (carry on below it, don't write over it):` : "Nothing is on it yet.");
+      } else {
+        const lines = await d.pageLines(p).catch(() => []);
+        out.push(`The board is page ${p} of the printed PDF “${basename(path)}”, 100 wide and ${high} tall. You are writing on top of the print.`);
+        if (lines.length) {
+          out.push("Its printed lines, each with where it is (x and y are the line's top-left corner):");
+          let used = 0;
+          for (const l of lines) {
+            const row = `[x=${r1(l.x)} y=${r1(l.y)} w=${r1(l.w)} h=${r1(l.h)}] ${l.text}`;
+            if ((used += row.length) > 6000) break;
+            out.push(row);
+          }
+        } else out.push("It has no readable text (a scan or a picture).");
+        if (on.length) out.push("Already added on top of it:");
+      }
+      for (const m of texts) if (m.kind === "text") out.push(`text at x=${r1(m.x)} y=${r1(m.y)}: ${m.text.replace(/\s+/g, " ").slice(0, 90)}`);
+      if (drawn) out.push(`${drawn} drawn line${drawn > 1 ? "s" : ""} or shape${drawn > 1 ? "s" : ""}.`);
+      if (d.blank) out.push(`The next free line is at y=${r1(y)}.`);
+      return out.join("\n");
+    },
+    async apply(op: BoardOp) {
+      const d = docNow.current;
+      if (!d) return [];
+      if (!pen.current) board.begin();
+      const at = pen.current!;
+      const high = pageUnits(at.page);
+      /** Carry on at the top of the next page (only an empty PDF grows). */
+      const nextPage = async () => {
+        if (!d.blank) return false;
+        let n: number | null = at.page + 1;
+        if (n > docNow.current!.numPages || marksNow.current.some((m) => m.page === n)) n = await addPage();
+        if (!n) return false;
+        at.page = n;
+        at.y = BOARD_MARGIN;
+        at.fig = null;
+        goTo(n);
+        await wait(250);
+        return true;
+      };
+      const added: string[] = [];
+      const put = async (m: PdfMark) => {
+        added.push(m.id);
+        await drawLive(m);
+      };
+      // Inside a figure, positions are measured from its top-left corner.
+      const dy = at.fig ? at.fig.y0 : 0;
+      const X = (x: number) => r1(clamp(x, 0, 100));
+      const Y = (y: number) => r1(clamp(y + dy, 0, high));
+      const base = { id: newMarkId(), page: at.page, color: boardColor(op.op === "figure" || op.op === "end" || op.op === "page" || op.op === "erase" ? undefined : op.color) };
+      /** After something placed freely, the writing carries on below it. */
+      const below = (y: number) => {
+        if (!at.fig) at.y = Math.max(at.y, y + 1.8);
+      };
+      switch (op.op) {
+        case "write": {
+          const text = op.text.trim();
+          if (!text) break;
+          const size = BOARD_TEXT[op.size ?? "m"];
+          const w = 100 - BOARD_MARGIN * 2;
+          at.fig = null;
+          // About how tall it will be, to start a new page rather than run off this one.
+          const rows = Math.max(1, Math.ceil((text.length * size * 0.5) / w));
+          if (at.y + rows * size * 1.4 > high - BOARD_MARGIN && at.y > BOARD_MARGIN + 1) await nextPage();
+          const m: PdfMark = { ...base, page: at.page, kind: "text", size, x: BOARD_MARGIN, y: r1(at.y), w, text, note: !d.blank || undefined };
+          await put(m);
+          at.y = Math.max(at.y + size * 1.4, lowestMarkOf(m)) + size * 0.55;
+          break;
+        }
+        case "text": {
+          const text = op.text.trim();
+          if (!text) break;
+          const m: PdfMark = { ...base, kind: "text", size: BOARD_TEXT[op.size ?? "m"], x: X(op.x), y: Y(op.y), text, note: (!d.blank && !at.fig) || undefined };
+          await put(m);
+          below(lowestMarkOf(m));
+          break;
+        }
+        case "line":
+        case "arrow":
+          await put({ ...base, kind: op.op, size: PEN_SIZES[1], x1: X(op.x1), y1: Y(op.y1), x2: X(op.x2), y2: Y(op.y2) });
+          below(Math.max(op.y1, op.y2) + dy);
+          break;
+        case "rect":
+        case "ellipse":
+          await put({ ...base, kind: op.op, size: PEN_SIZES[1], x1: X(op.x), y1: Y(op.y), x2: X(op.x + op.w), y2: Y(op.y + op.h) });
+          below(op.y + op.h + dy);
+          break;
+        case "highlight":
+        case "cover":
+          await put({ ...base, color: boardColor(op.color, MARK_COLORS[5]!), kind: "box", fill: op.op, size: 0, x1: X(op.x), y1: Y(op.y), x2: X(op.x + op.w), y2: Y(op.y + op.h) });
+          break;
+        case "draw": {
+          if (op.points.length < 2) break;
+          // A few points become a smooth curve: fill in between them.
+          const points: [number, number][] = [];
+          op.points.forEach(([x, y], i) => {
+            const prev = op.points[i - 1];
+            if (prev) for (let k = 1; k < 4; k++) points.push([X(prev[0] + ((x - prev[0]) * k) / 4), Y(prev[1] + ((y - prev[1]) * k) / 4)]);
+            points.push([X(x), Y(y)]);
+          });
+          await put({ ...base, kind: "stroke", size: PEN_SIZES[1], opacity: 1, points });
+          below(Math.max(...op.points.map((pt) => pt[1])) + dy);
+          break;
+        }
+        case "figure": {
+          const h = clamp(op.height || 30, 6, high - BOARD_MARGIN * 2);
+          if (at.y + h > high - BOARD_MARGIN && at.y > BOARD_MARGIN + 1) await nextPage();
+          at.fig = { y0: at.y, h };
+          follow(at.page, at.y + h);
+          break;
+        }
+        case "end":
+          if (at.fig) at.y = Math.max(at.y, at.fig.y0 + at.fig.h + 2.2);
+          at.fig = null;
+          break;
+        case "page":
+          await nextPage();
+          break;
+        case "erase": {
+          const kept = marksNow.current.filter((m) => m.page !== at.page);
+          if (kept.length !== marksNow.current.length) commitMarks(kept);
+          at.y = BOARD_MARGIN;
+          at.fig = null;
+          break;
+        }
+      }
+      return added;
+    },
+    remove(ids) {
+      const gone = new Set(ids);
+      if (marksNow.current.some((m) => gone.has(m.id))) commitMarks(marksNow.current.filter((m) => !gone.has(m.id)), { undo: false });
+      pen.current = null;
+    },
+    hurry() {
+      hurried.current = true;
+    },
+  };
+  /** The bottom of one mark as shown, in page units. */
+  function lowestMarkOf(m: PdfMark): number {
+    const el = pageEl(m.page);
+    const box = el?.getBoundingClientRect();
+    const shown = box?.width ? el!.parentElement?.querySelector<HTMLElement>(`.pdf-mark-text[data-mark-id="${m.id}"]`) : null;
+    return shown ? (shown.getBoundingClientRect().bottom - box!.top) / (box!.width / 100) : markBottom(m);
+  }
+  const boardNow = useRef(board);
+  boardNow.current = board;
+  useEffect(() => {
+    if (!registerBoard || !doc) return;
+    // One steady handle that always reaches the latest state.
+    registerBoard({
+      path,
+      name: basename(path),
+      blank: doc.blank,
+      begin: () => boardNow.current.begin(),
+      describe: () => boardNow.current.describe(),
+      apply: (op) => boardNow.current.apply(op),
+      remove: (ids) => boardNow.current.remove(ids),
+      hurry: () => boardNow.current.hurry(),
+    });
+    return () => registerBoard(null);
+    // Reading the file again (a page was added) keeps the same handle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerBoard, !doc, doc?.blank, path]);
 
   const quote = () => {
     if (!sel) return;
@@ -404,6 +830,21 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         <button className="w-icon-btn" onClick={() => setZoom((z) => Math.max(0.3, +(z - 0.1).toFixed(2)))} aria-label="Zoom out">−</button>
         <span className="w-muted">{Math.round(zoom * 100)}%</span>
         <button className="w-icon-btn" onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))} aria-label="Zoom in">+</button>
+        <button
+          className="w-icon-btn pdf-draw-toggle"
+          disabled={!doc}
+          aria-pressed={!!tool}
+          aria-label="Draw on the PDF"
+          title="Draw, add shapes and type on the PDF"
+          onClick={() => {
+            setSel(null);
+            setActiveHl(null);
+            setSelected(null);
+            setTool((t) => (t ? null : "pen"));
+          }}
+        >
+          <Icon name="pencil" size={17} />
+        </button>
         {openAi && (
           <button
             className="w-btn w-btn-small pdf-ai"
@@ -424,6 +865,26 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
           )}
         </form>
       </div>
+      {tool && (
+        <MarkToolbar
+          tool={tool}
+          onTool={(t) => { setTool(t); if (t !== "select") setSelected(null); }}
+          color={color}
+          onColor={(c) => {
+            setColor(c);
+            // Recolour what's picked.
+            const m = selected ? marksNow.current.find((x) => x.id === selected) : undefined;
+            if (m && m.color !== c) commitMarks(marksNow.current.map((x) => (x.id === m.id ? { ...x, color: c } : x)));
+          }}
+          sizeIndex={sizeIndex}
+          onSize={setSizeIndex}
+          canUndo={undoable > 0}
+          onUndo={undoMark}
+          canDelete={!!selected}
+          onDelete={() => selected && removeMark(selected)}
+          onDone={() => { setTool(null); setSelected(null); }}
+        />
+      )}
       <div className="pdf-body">
         {thumbs && doc && (
           <nav className="pdf-thumbs" aria-label="Pages">
@@ -444,8 +905,13 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
           {error && <p className="ws-empty">{error}</p>}
           {!doc && !error && <p className="ws-empty w-muted">Opening PDF…</p>}
           {doc && Array.from({ length: doc.numPages }, (_, i) => (
-            <PdfPage key={i} doc={doc} n={i + 1} scale={scale} cssZoom={zoom} textLayer highlights={highlights} pick={picked ? { checked: picked.has(i + 1), onToggle: () => togglePick(i + 1) } : undefined} />
+            <PdfPage key={i} doc={doc} n={i + 1} scale={scale} cssZoom={zoom} textLayer highlights={highlights} marks={marks} markLayer={markLayer} pick={picked ? { checked: picked.has(i + 1), onToggle: () => togglePick(i + 1) } : undefined} />
           ))}
+          {doc?.blank && (
+            <button className="w-btn w-btn-small pdf-add-page" onClick={() => void addPage().then((n) => n && requestAnimationFrame(() => goTo(n)))}>
+              <Icon name="plus" size={14} /> Add a page
+            </button>
+          )}
           {activeHl && (
             <div className="pdf-quote-btn" style={{ left: activeHl.x, top: activeHl.y - 48 }} onMouseDown={(e) => e.preventDefault()} onClick={(e) => e.stopPropagation()}>
               {PDF_HL_COLORS.map((c) => (
@@ -500,13 +966,16 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
 }
 
 /** One page: placeholder until near the viewport, then canvas + selectable text layer. */
-function PdfPage({ doc, n, scale, cssZoom = scale, textLayer, pick, highlights }: {
+function PdfPage({ doc, n, scale, cssZoom = scale, textLayer, pick, highlights, marks, markLayer }: {
   doc: PdfDoc;
   n: number;
   scale: number;
   cssZoom?: number;
   textLayer: boolean;
   highlights?: PdfHighlight[];
+  /** Everything drawn or typed on the PDF, and the tools to add more. */
+  marks?: PdfMark[];
+  markLayer?: MarkLayerProps;
   /** Shows a checkbox for choosing this page. */
   pick?: { checked: boolean; onToggle: () => void };
 }) {
@@ -546,6 +1015,7 @@ function PdfPage({ doc, n, scale, cssZoom = scale, textLayer, pick, highlights }
           )),
         )}
       </div>
+      {markLayer && <MarkLayer {...markLayer} page={n} width={w} height={h} marks={(marks ?? []).filter((m) => m.page === n)} />}
       {pick && (
         <label className="pdf-page-check">
           <input type="checkbox" checked={pick.checked} onChange={pick.onToggle} />

@@ -56,7 +56,17 @@
 
 /* ---------- split view ---------- */
 .split { height: 100%; display: grid; grid-template-columns: 1fr; padding: 0 12px 0 0; }
-.split-open { grid-template-columns: minmax(320px, 1fr) minmax(420px, 1.15fr); gap: 12px; }
+.split-open { grid-template-columns: minmax(260px, var(--split-a, 1fr)) 12px minmax(300px, var(--split-b, 1.15fr)); }
+/* The border between the two sides: drag it to resize them. */
+.split-handle { position: relative; cursor: col-resize; touch-action: none; outline: 0; }
+.split-handle::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 44px; border-radius: 4px;
+  transform: translate(-50%, -50%); background: color-mix(in srgb, var(--w-text) 16%, transparent);
+  transition: background 150ms var(--w-ease), height 150ms var(--w-ease);
+}
+.split-handle:hover::after, .split-handle:focus-visible::after, .split-handle.dragging::after { background: var(--w-accent); height: 72px; }
+.split-dragging { cursor: col-resize; user-select: none; }
+.split-dragging .left-pane, .split-dragging .right-pane { pointer-events: none; }
 .left-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--w-panel); border-radius: 22px; overflow: hidden; box-shadow: var(--w-shadow); animation: w-rise 300ms var(--w-ease); }
 .right-pane { min-width: 0; min-height: 0; }
 .tabs-row { display: flex; align-items: center; gap: 4px; padding: 8px 8px 4px; flex: none; }
@@ -287,7 +297,19 @@
   .rail-zones { flex: 1; justify-content: space-around; }
   .rail-item { padding: 6px 10px; width: auto; }
   .split { padding: 0 8px; }
-  .split-open { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }
+  .split-open { grid-template-columns: 1fr; grid-template-rows: minmax(120px, var(--split-a, 45fr)) 14px minmax(160px, var(--split-b, 55fr)); }
+  .split-handle { cursor: row-resize; }
+  /* A lesson on a phone: the board sits on top and the chat below it. */
+  .split-board-first > .right-pane { grid-row: 1; }
+  .split-board-first > .split-handle { grid-row: 2; }
+  .split-board-first > .left-pane { grid-row: 3; }
+  .split-open.split-lesson { grid-template-rows: minmax(120px, 1fr) 14px 44vh; }
+  .w-dock-panel.tutor-panel { max-height: 44vh; padding: 14px; }
+  .tutor-panel .tutor-log { max-height: 16vh; }
+  .tutor-started .tutor-where { display: none; }
+  .split-handle::after { width: 44px; height: 4px; }
+  .split-handle:hover::after, .split-handle:focus-visible::after, .split-handle.dragging::after { width: 72px; height: 4px; }
+  .split-dragging { cursor: row-resize; }
   .note-pane.with-outline { grid-template-columns: 1fr; }
   .outline { display: none; }
   .home-grid { grid-template-columns: minmax(0, 1fr); }
@@ -439,3 +461,38 @@
 .ask-ai-off p { margin: 0; }
 .edit-toolbar-ai { color: var(--w-accent); }
 .ask-ai-input:focus, .ask-ai-input:focus-visible { outline: 0; box-shadow: none; }
+
+/* The AI panel's two modes, and the tutor's chat. */
+.ai-modes { display: flex; gap: 2px; width: max-content; margin: 0 0 12px; padding: 3px; border-radius: 999px; background: var(--w-soft); }
+.ai-modes button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border: 0; border-radius: 999px; background: none; color: var(--w-text-muted); font-size: 13px; cursor: pointer; }
+.ai-modes button[aria-selected="true"] { background: var(--w-surface); color: var(--w-text); box-shadow: var(--w-shadow); }
+.tutor { display: flex; flex-direction: column; gap: 10px; }
+.tutor-where { margin: 0; }
+.tutor-where b { font-weight: 600; color: var(--w-text); }
+.tutor-log { display: flex; flex-direction: column; gap: 8px; max-height: min(34vh, 300px); overflow-y: auto; padding: 2px; }
+.tutor-msg { max-width: 90%; padding: 8px 12px; border-radius: 16px; font-size: 14px; line-height: 1.45; }
+.tutor-you { align-self: flex-end; border-bottom-right-radius: 6px; background: var(--w-accent); color: var(--w-accent-text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tutor-tutor { align-self: flex-start; border-bottom-left-radius: 6px; background: var(--w-soft); }
+.tutor-tutor .card-md ul, .tutor-tutor .card-md ol { display: block; }
+.tutor-error { color: var(--w-danger); background: color-mix(in srgb, var(--w-danger) 10%, transparent); }
+.tutor-working { display: block; font-size: 12px; color: var(--w-text-muted); }
+.tutor-undo { display: block; margin: 4px 0 0; padding: 0; }
+.tutor-starters { display: flex; flex-wrap: wrap; gap: 6px; }
+.tutor-ask { display: flex; align-items: flex-end; gap: 8px; }
+.tutor-input { flex: 1; min-width: 0; max-height: 120px; padding: 10px 14px; border-radius: 18px; resize: none; font-size: 15px; field-sizing: content; }
+.tutor-foot { display: flex; justify-content: space-between; min-height: 18px; }
+.tutor-foot .ai-link:only-child { margin-left: auto; }
+.tutor-link { margin-left: 0; }
+/* Beside the board rather than over it. */
+.w-dock-panel.tutor-panel { width: min(400px, calc(100vw - 24px)); }
+@media (min-width: 861px) {
+  .w-dock-panel.tutor-panel-left { left: 12px; transform: none; animation: none; }
+  .w-dock-panel.tutor-panel-right { left: auto; right: 12px; transform: none; animation: none; }
+}
+/* A tab (the tutor's board, a PDF) shown where the note usually is. */
+.right-tab { display: flex; flex-direction: column; background: var(--w-panel); border-radius: 22px; overflow: hidden; box-shadow: var(--w-shadow); }
+.right-tab .tab > button:first-child { cursor: default; }
+
+/* The AI panel while the answer is being written into the note. */
+.ai-panel.ai-writing { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+.ai-writing-label { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--w-text-muted); }

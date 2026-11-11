@@ -1,4 +1,5 @@
 import { suggestions } from "./suggestions";
+import { liveWrite } from "./liveWrite";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, drawSelection, dropCursor, highlightActiveLine, keymap, placeholder as placeholderExt, rectangularSelection } from "@codemirror/view";
 import { defaultKeymap, deleteLine, history, historyKeymap, indentWithTab } from "@codemirror/commands";
@@ -79,6 +80,7 @@ export function writalinExtensions(o: WritalinEditorOptions): Extension[] {
     syntaxHighlighting(highlight),
     livePreview,
     suggestions,
+    liveWrite,
     tables,
     media,
     linkClicks,

@@ -1,0 +1,77 @@
+import type { BoardOp, BoardTextSize } from "@writalin/workspaces";
+
+/**
+ * The tutor's reply is a list of one-line commands (see TUTOR_SYSTEM on the
+ * server): `say: …` for the chat, the rest for the board. This turns one
+ * line into a step. Anything that isn't a command is taken as something said,
+ * so a model that drifts into prose still makes sense.
+ */
+export type TutorStep = { say: string } | BoardOp;
+
+const SIZES = new Set(["s", "m", "l", "xl"]);
+const COLORS = new Set(["black", "red", "blue", "green", "purple", "orange", "yellow"]);
+const COMMAND = /^(say|write|text|line|arrow|rect|ellipse|circle|draw|highlight|cover|figure|end|page|erase)\b[ \t]*([^:]*?)[ \t]*(?::[ \t]?(.*))?$/i;
+
+export function parseTutorLine(raw: string): TutorStep | null {
+  // Models like to dress lines up as list items or code; take that off.
+  const line = raw.replace(/^\s*(?:[-*•]\s+|\d+[.)]\s+)?/, "").replace(/^`+|`+$/g, "").trim();
+  if (!line || /^```/.test(raw.trim())) return null;
+  const m = COMMAND.exec(line);
+  if (!m) return { say: line };
+  const word = m[1]!.toLowerCase();
+  const args = m[2] ?? "";
+  const rest = (m[3] ?? "").trim();
+  const words = args.split(/[\s,]+/).filter(Boolean);
+  const nums = words.map(Number).filter((n) => Number.isFinite(n));
+  const size = words.map((w) => w.toLowerCase()).find((w) => SIZES.has(w)) as BoardTextSize | undefined;
+  const color = words.map((w) => w.toLowerCase()).find((w) => COLORS.has(w));
+  // A sentence that merely starts with a command word ("Page 3 shows…", "End of the proof.") is prose.
+  const stray = words.some((w) => !SIZES.has(w.toLowerCase()) && !COLORS.has(w.toLowerCase()) && !Number.isFinite(Number(w)));
+  switch (word) {
+    case "say":
+      return rest || args ? { say: rest ? (args ? `${args}: ${rest}` : rest) : args } : null;
+    case "write":
+      if (stray || nums.length) return { say: line };
+      return rest ? { op: "write", text: rest, size, color } : null;
+    case "text":
+      if (stray || nums.length < 2 || !rest) return { say: line };
+      return { op: "text", x: nums[0]!, y: nums[1]!, text: rest, size, color };
+    case "line":
+    case "arrow":
+      if (stray || nums.length < 4) return { say: line };
+      return { op: word, x1: nums[0]!, y1: nums[1]!, x2: nums[2]!, y2: nums[3]!, color };
+    case "rect":
+    case "highlight":
+    case "cover":
+      if (stray || nums.length < 4) return { say: line };
+      return { op: word, x: nums[0]!, y: nums[1]!, w: nums[2]!, h: nums[3]!, color };
+    case "ellipse":
+    case "circle": {
+      if (stray || nums.length < 3) return { say: line };
+      const [cx, cy, rx, ry = rx] = nums as [number, number, number, number?];
+      return { op: "ellipse", x: cx - rx, y: cy - ry!, w: rx * 2, h: ry! * 2, color };
+    }
+    case "draw": {
+      // The points come after the colon, or straight after the word.
+      const points = [...`${args} ${rest}`.matchAll(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/g)].map((p) => [Number(p[1]), Number(p[2])] as [number, number]);
+      return points.length >= 2 ? { op: "draw", points, color } : { say: line };
+    }
+    case "figure":
+      if (stray || rest) return { say: line };
+      return { op: "figure", height: nums[0] ?? 30 };
+    case "end":
+    case "page":
+    case "erase":
+      // "page new" and "erase page" are fine; a sentence is not.
+      if (rest || words.some((w) => !/^(new|next|page|all|figure|board)$/i.test(w))) return { say: line };
+      return { op: word };
+  }
+  return { say: line };
+}
+
+/** The whole lines in what has streamed in so far; the last, unfinished one waits. */
+export function completeLines(soFar: string, done = false): string[] {
+  const lines = soFar.split("\n");
+  if (!done) lines.pop();
+  return lines;
+}
