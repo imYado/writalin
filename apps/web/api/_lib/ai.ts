@@ -64,6 +64,20 @@ function editInstruction(mode: "auto" | "force"): string {
       ].join("\n");
 }
 
+/**
+ * A request about the part of the note the student highlighted. A question
+ * gets an answer shown beside the text; a change comes back as the whole new
+ * version of the highlighted text, which the app shows as changes to approve.
+ * Nothing outside the highlighted text can change.
+ */
+const SELECTION_INSTRUCTION = [
+  "The student highlighted part of their own note; it is in <selection> below. The whole note is in <note> for context only: use it when the request needs it (what a term means here, what comes before, the topic), and ignore it otherwise.",
+  "Decide what the request needs:",
+  "- A question (what does this mean, is this right, why, give an example, how does this connect to…): reply with only the answer, short and clear. It is shown to the student next to the text; the note does not change.",
+  "- A change to the highlighted text (fix, rewrite, shorten, expand, simplify, translate, format, add something to it, remove part of it, delete it): the first line is exactly `@@replace`, then the whole new version of the highlighted text and nothing else. It replaces the highlighted text once the student approves it. To delete all of it, write only `@@replace`.",
+  "When you change it, keep everything the request doesn't need changed exactly as it is, including the student's Markdown, links, line breaks and `Question :: Answer` lines. You can only change the highlighted text: never repeat or change anything else from the note, and never put the new version in a code block.",
+].join("\n");
+
 export type QuizKind = "choice" | "written";
 export interface ToolOptions {
   quizKind?: QuizKind;
@@ -72,7 +86,9 @@ export interface ToolOptions {
   /** Extra wishes typed by the student, e.g. "focus on chapter 2" or "make it harder". */
   extra?: string;
   /** On a question about the student's own note: let the AI suggest edits ("auto"), or only edits ("force"). */
-  edit?: "auto" | "force";
+  edit?: "auto" | "force" | "selection";
+  /** With `edit: "selection"`: the highlighted part of the note, which is the only part the AI may change. */
+  selection?: string;
   /** Earlier answers in this conversation, each followed by the student's next question. */
   thread?: { answer: string; followUp: string }[];
 }
@@ -235,13 +251,15 @@ export async function runTool(
 ): Promise<{ text: string; model: string }> {
   const instruction =
     tool === "quiz" ? quizInstruction(opts.quizKind ?? "choice", opts.count ?? 5)
-    : tool === "ask" && text && opts.edit ? editInstruction(opts.edit)
+    : tool === "ask" && text && opts.edit === "selection" ? SELECTION_INSTRUCTION
+    : tool === "ask" && text && opts.edit ? editInstruction(opts.edit === "force" ? "force" : "auto")
     : AI_TOOLS[tool];
   const first = [
     instruction,
     opts.extra ? `\nExtra wishes from the student (follow them, but keep the layout and format rules above): ${opts.extra}` : "",
     question ? `\nQuestion: ${question}` : "",
     text ? (tool === "vault" ? `\n<sources>\n${text}\n</sources>` : `\n<note>\n${text}\n</note>`) : "",
+    opts.edit === "selection" ? `\n<selection>\n${opts.selection ?? ""}\n</selection>` : "",
   ].join("");
   // A follow-up replays the conversation so far, then adds the new question.
   const messages: ChatMessage[] = [{ role: "user", content: first }];
@@ -253,6 +271,11 @@ export async function runTool(
   // Edits must match the note exactly, so they're passed on untouched (minus any lead-in before them).
   const edit = /^@@edit\b/m.exec(out.text);
   if (edit && edit.index < 300) return { ...out, text: out.text.slice(edit.index) };
+  // A new version of the highlighted text: kept exactly as written, so only real changes show.
+  if (opts.edit === "selection") {
+    const replace = /^@@replace[ \t]*\n?/m.exec(out.text);
+    if (replace && replace.index < 300) return { ...out, text: `@@replace\n${out.text.slice(replace.index + replace[0].length).replace(/^```\w*\n([\s\S]*?)\n?```\s*$/, "$1")}` };
+  }
   return { ...out, text: stripChatter(tidyAiMarkdown(out.text)) };
 }
 

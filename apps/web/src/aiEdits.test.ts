@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isEditAnswer, parseEdits, planEdits } from "./aiEdits";
+import { diffChanges, isEditAnswer, isReplaceAnswer, parseEdits, planEdits, replaceText } from "./aiEdits";
 
 const answer = `@@edit
 Fixed two spelling mistakes and added a summary.
@@ -62,5 +62,39 @@ describe("AI edits", () => {
     const doc = "Keep.\nDelete me.\nEnd.";
     const { changes } = planEdits(doc, [{ find: "Delete me.", replace: "" }], { from: 0, to: doc.length });
     expect(changes).toEqual([{ from: 6, to: 17, insert: "" }]);
+  });
+});
+
+describe("diffChanges", () => {
+  const apply = (doc: string, changes: { from: number; to: number; insert: string }[]) =>
+    [...changes].sort((x, y) => y.from - x.from).reduce((d, c) => d.slice(0, c.from) + c.insert + d.slice(c.to), doc);
+  const cases: [string, string][] = [
+    ["The cell membrane is made of lipids.", "The cell membrane is made of a phospholipid bilayer."],
+    ["Mitocondria makes energy", "Mitochondria make energy (ATP)."],
+    ["one\ntwo\nthree", "one\nthree"],
+    ["delete me", ""],
+    ["", "new text"],
+    ["- a\n- b", "- **a**\n- b\n- c"],
+    ["same", "same"],
+    ["word word word", "word other word"],
+  ];
+  it.each(cases)("turns %j into %j", (before, after) => {
+    const note = `Intro.\n${before}\nOutro.`;
+    const changes = diffChanges(before, after, 7);
+    expect(apply(note, changes)).toBe(`Intro.\n${after}\nOutro.`);
+    for (const c of changes) {
+      expect(c.from).toBeGreaterThanOrEqual(7);
+      expect(c.to).toBeLessThanOrEqual(7 + before.length);
+    }
+  });
+  it("changes only the words that differ", () => {
+    expect(diffChanges("The quick brown fox", "The slow brown fox")).toEqual([{ from: 4, to: 9, insert: "slow" }]);
+    expect(diffChanges("a b c d", "a x y d")).toEqual([{ from: 2, to: 5, insert: "x y" }]);
+  });
+  it("reads @@replace answers", () => {
+    expect(isReplaceAnswer("@@replace\nnew")).toBe(true);
+    expect(isReplaceAnswer("An answer.")).toBe(false);
+    expect(replaceText("@@replace\nnew\ntext")).toBe("new\ntext");
+    expect(replaceText("@@replace")).toBe("");
   });
 });

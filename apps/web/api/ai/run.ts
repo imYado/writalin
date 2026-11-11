@@ -5,7 +5,7 @@ import { AI_TOOLS, MAX_INPUT_CHARS, resolveKey, runTool, takeQuota, type AiTool,
 /** Run one study tool on text the person chose. Signed-in only; keys stay on the server. */
 export const POST = handler(async (req) => {
   const user = await requireUser(req);
-  const body = await readJson<{ tool?: string; text?: string; question?: string; quizKind?: string; count?: number; extra?: string; stream?: boolean; thread?: unknown; edit?: string }>(req, 400 * 1024);
+  const body = await readJson<{ tool?: string; text?: string; question?: string; quizKind?: string; count?: number; extra?: string; stream?: boolean; thread?: unknown; edit?: string; selection?: string }>(req, 400 * 1024);
   const tool = body.tool as AiTool;
   if (!tool || !Object.hasOwn(AI_TOOLS, tool)) throw new HttpError(400, "Unknown AI tool.");
   const text = String(body.text ?? "").trim();
@@ -22,8 +22,11 @@ export const POST = handler(async (req) => {
     count: Math.min(20, Math.max(3, Math.round(Number(body.count) || 5))),
     extra: String(body.extra ?? "").trim().slice(0, 1000) || undefined,
     thread: readThread(body.thread),
-    edit: body.edit === "force" ? "force" : body.edit === "auto" ? "auto" : undefined,
+    edit: body.edit === "force" ? "force" : body.edit === "auto" ? "auto" : body.edit === "selection" ? "selection" : undefined,
+    selection: body.edit === "selection" ? String(body.selection ?? "") : undefined,
   };
+  if (opts.edit === "selection" && !opts.selection?.trim()) throw new HttpError(400, "Highlight some text first.");
+  if ((opts.selection?.length ?? 0) > MAX_INPUT_CHARS) throw new HttpError(413, "That's too much text at once. Highlight a smaller part.");
 
   const target = await resolveKey(user.id);
   await takeQuota(user.id, target.mode);
