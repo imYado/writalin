@@ -536,7 +536,17 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           workspace={showLeft ? wsAi : null}
           focusWorkspace={aiFocus}
           canInsert={!noNote}
-          insert={(md) => ed()?.insert(md, { block: true })}
+          insert={(md) => {
+            const e = ed();
+            const v = e?.view;
+            if (!e || !v) return;
+            // After the selection (not inside it), on its own lines.
+            v.dispatch({ selection: { anchor: v.state.selection.main.to } });
+            e.insert(md, { block: true });
+            // Close the panel so the new text can be seen.
+            setDockOpen(null);
+          }}
+          undo={() => ed()?.run("undo")}
           openSource={(path, line) => void openPath(path, { line })}
           suggestEdits={(edits, range, summary) => {
             const e = ed();

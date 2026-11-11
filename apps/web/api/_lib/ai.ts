@@ -3,7 +3,7 @@ import { db } from "./db.js";
 import { HttpError } from "./http.js";
 import { decryptSecret } from "./secrets.js";
 import { chat, listModels, PROVIDERS, type ChatMessage, type ProviderId } from "./providers.js";
-import { tidyAiMarkdown } from "./format.js";
+import { stripChatter, tidyAiMarkdown } from "./format.js";
 
 export type AiMode = "builtin" | "own";
 
@@ -45,12 +45,23 @@ const EDIT_FORMAT = [
   "Never put the edits in a code block and write nothing after the last >>>END.",
 ].join("\n");
 
-/** Ask about the student's own note, where the AI may also change it (shown to them for approval first). */
+/**
+ * A request about the student's own note. New writing is inserted at their
+ * cursor as it is; changes to what's already there come back as edits they
+ * accept or reject in the note.
+ */
 function editInstruction(mode: "auto" | "force"): string {
   return mode === "force"
     ? `The <note> below is the student's own note. Do what the student asks to it, and reply only with edits.\n\n${EDIT_FORMAT}`
-    : "The <note> below is the student's own note, and you can change it. If the student asks you to change, fix, rewrite, shorten, expand, reorder, translate, format or add to the note, reply with edits in the edit format below instead of an answer; they see them as suggestions to accept or reject. " +
-        `Otherwise answer their question using the note as context; if the note doesn't contain the answer, say so briefly and answer from general knowledge.\n\n${EDIT_FORMAT}`;
+    : [
+        "The <note> below is the student's own note, open in front of them. Your reply goes straight into the note.",
+        "Decide what the request needs:",
+        "- To change what is already in the note (fix, rewrite, shorten, expand, reorder, translate, format, rename, delete or move parts of it, or add something at a particular place in it): reply with edits in the edit format below. The student sees them in the note and accepts or rejects each one.",
+        "- To write something new (a summary, an explanation, a list, notes, an answer to a question, flashcards…): reply with only that new text. It is inserted where the student's cursor is, exactly as you write it.",
+        "Use the note as context. If the note doesn't hold the answer, answer from general knowledge.",
+        "",
+        EDIT_FORMAT,
+      ].join("\n");
 }
 
 export type QuizKind = "choice" | "written";
@@ -104,9 +115,12 @@ function quizInstruction(kind: QuizKind, count: number): string {
 }
 
 const SYSTEM = [
-  "You are the study helper inside Writalin, a calm note-taking app for students, including students with ADHD.",
-  "Write in clear, friendly, plain language. Short sentences. No filler, no praise, no preamble like 'Sure!' or 'Here is'.",
-  "Output Markdown the Writalin editor can show, and nothing else. Allowed: # / ## / ### headings, **bold**, _italic_, ~~strikethrough~~, ==highlight==, `inline code`, ``` code blocks, - bullet lists, 1. numbered lists, - [ ] checklists, > quotes, > [!note] / [!tip] / [!warning] / [!question] / [!success]- callouts, tables, [text](url) links, and `Question :: Answer` flashcard lines.",
+  "You are the AI inside Writalin, a calm note-taking app for students, including students with ADHD.",
+  "Whatever you write is put straight into the student's note, so reply with only the content they asked for, ready to keep.",
+  "Never open with a greeting, an acknowledgement or a lead-in such as 'Sure', 'Okay', 'Of course', 'Great question', 'Here is the summary', 'Here are your flashcards' or 'Below is'. Never restate the request. Never end with an offer, a question or a sign-off such as 'Let me know if…', 'I hope this helps' or 'Would you like…'. No notes about what you did, unless the edit format asks for one.",
+  "Don't add a title or heading unless the student asks for one or the format below includes one.",
+  "Write in clear, plain language. Short sentences. No filler or praise.",
+  "Output Markdown the Writalin editor can show, and nothing else. Allowed: # / ## / ### headings, **bold**, *italic*, ~~strikethrough~~, ==highlight==, `inline code`, ``` code blocks, - bullet lists, 1. numbered lists, - [ ] checklists, > quotes, > [!note] / [!tip] / [!warning] / [!question] / [!success]- callouts, tables, [text](url) links, and `Question :: Answer` flashcard lines.",
   "Never use LaTeX or math markup: no \\[ \\], \\( \\), $…$ or $$…$$, no \\frac or \\sqrt. Write maths as plain text with Unicode symbols, e.g. x², √(b² − 4ac), a/b, π r², ≤, ×, H₂O.",
   "No HTML, footnotes, images or emoji headings. Never wrap the whole answer in a code block.",
   "Keep the language of the student's text: if the note is in Spanish, answer in Spanish.",
@@ -236,8 +250,10 @@ export async function runTool(
     messages.push({ role: "user", content: `Follow-up from the student (same note, same format rules): ${turn.followUp}` });
   }
   const out = await callModel(target, messages, onDelta, signal);
-  // Edits must match the note exactly, so they're passed on untouched.
-  return { ...out, text: /^\s*@@edit/.test(out.text) ? out.text : tidyAiMarkdown(out.text) };
+  // Edits must match the note exactly, so they're passed on untouched (minus any lead-in before them).
+  const edit = /^@@edit\b/m.exec(out.text);
+  if (edit && edit.index < 300) return { ...out, text: out.text.slice(edit.index) };
+  return { ...out, text: stripChatter(tidyAiMarkdown(out.text)) };
 }
 
 async function callModel(target: AiTarget, messages: ChatMessage[], onDelta?: (text: string) => void, signal?: AbortSignal): Promise<{ text: string; model: string }> {

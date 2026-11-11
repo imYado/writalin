@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { latexToText, tidyAiMarkdown } from "./format.js";
+import { latexToText, stripChatter, tidyAiMarkdown } from "./format.js";
 
 describe("tidyAiMarkdown", () => {
   it("turns LaTeX into plain text the editor can show", () => {
@@ -26,5 +26,19 @@ describe("latexToText", () => {
     expect(latexToText("\\frac{a+b}{2}")).toBe("(a+b)/2");
     expect(latexToText("\\Delta x \\approx 0")).toBe("Δ x ≈ 0");
     expect(latexToText("H_2O")).toBe("H₂O");
+  });
+});
+
+describe("stripChatter", () => {
+  it("drops lead-ins and sign-offs around the content", () => {
+    expect(stripChatter("Sure! Here is the summary:\n\n**Cells are alive.**\n- one")).toBe("**Cells are alive.**\n- one");
+    expect(stripChatter("Here are your flashcards:\nA? :: B")).toBe("A? :: B");
+    expect(stripChatter("- one\n- two\n\nLet me know if you want more!")).toBe("- one\n- two");
+    expect(stripChatter("Okay.\n- one\n\nI hope this helps.")).toBe("- one");
+  });
+  it("keeps content that only looks similar", () => {
+    expect(stripChatter("Here is where cells divide: in the nucleus.")).toBe("Here is where cells divide: in the nucleus.");
+    expect(stripChatter("Great Britain is an island.\nIt has three countries.")).toBe("Great Britain is an island.\nIt has three countries.");
+    expect(stripChatter("Okay")).toBe("Okay");
   });
 });

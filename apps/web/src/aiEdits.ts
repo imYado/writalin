@@ -10,12 +10,12 @@ export interface AiEdit {
   replace: string;
 }
 
-/** Whether an answer (or the start of one, while it streams) is edits rather than prose. */
-export const isEditAnswer = (text: string) => /^\s*(?:```\w*\s*)?@@edit\b/.test(text);
+/** Whether an answer (or the start of one, while it streams) is edits rather than prose. A short lead-in line or two before `@@edit` is allowed. */
+export const isEditAnswer = (text: string) => /^\s*(?:[^\n]{0,200}\n){0,2}\s*(?:```\w*\s*)?@@edit\b/.test(text);
 
 export function parseEdits(text: string): { summary: string; edits: AiEdit[] } | null {
   if (!isEditAnswer(text)) return null;
-  const body = text.replace(/^\s*(?:```\w*\s*)?@@edit\b[^\n]*\n?/, "").replace(/\n?```\s*$/, "");
+  const body = text.replace(/^[\s\S]*?@@edit\b[^\n]*\n?/, "").replace(/\n?```\s*$/, "");
   const first = body.indexOf("<<<FIND");
   const summary = (first < 0 ? body : body.slice(0, first)).trim();
   const edits: AiEdit[] = [];
@@ -67,6 +67,8 @@ export function planEdits(doc: string, edits: AiEdit[], range: { from: number; t
       missed++;
       continue;
     }
+    // Deleting whole lines takes their line break too, so no blank line is left behind.
+    if (!e.replace && doc[at.to] === "\n" && (at.from === 0 || doc[at.from - 1] === "\n")) at.to++;
     changes.push({ ...at, insert: e.replace });
   }
   return { changes, missed };
