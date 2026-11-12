@@ -5,15 +5,15 @@ import { AI_TOOLS, MAX_INPUT_CHARS, resolveKey, runTool, takeQuota, type AiTool,
 /** Run one study tool on text the person chose. Signed-in only; keys stay on the server. */
 export const POST = handler(async (req) => {
   const user = await requireUser(req);
-  const body = await readJson<{ tool?: string; text?: string; question?: string; quizKind?: string; count?: number; extra?: string; stream?: boolean; thread?: unknown; edit?: string; selection?: string }>(req, 400 * 1024);
+  const body = await readJson<{ tool?: string; text?: string; question?: string; quizKind?: string; count?: number; extra?: string; stream?: boolean; thread?: unknown; edit?: string; selection?: string; board?: string; printed?: boolean; history?: unknown }>(req, 400 * 1024);
   const tool = body.tool as AiTool;
   if (!tool || !Object.hasOwn(AI_TOOLS, tool)) throw new HttpError(400, "Unknown AI tool.");
   const text = String(body.text ?? "").trim();
   // A plain question needs no note; every other tool works on some text.
-  if (!text && tool !== "ask" && tool !== "chat") throw new HttpError(400, "There's no text to work with yet.");
+  if (!text && tool !== "ask" && tool !== "chat" && tool !== "tutor") throw new HttpError(400, "There's no text to work with yet.");
   if (!text && tool === "vault") throw new HttpError(400, "Nothing in your notes matches that question.");
   if (text.length > MAX_INPUT_CHARS) throw new HttpError(413, "That's too much text at once. Select a smaller part of the note.");
-  const asking = tool === "ask" || tool === "chat" || tool === "vault";
+  const asking = tool === "ask" || tool === "chat" || tool === "vault" || tool === "tutor";
   const question = asking ? String(body.question ?? "").trim().slice(0, 2000) : undefined;
   if (asking && !question) throw new HttpError(400, "Type a question first.");
 
@@ -24,6 +24,7 @@ export const POST = handler(async (req) => {
     thread: readThread(body.thread),
     edit: body.edit === "force" ? "force" : body.edit === "auto" ? "auto" : body.edit === "selection" ? "selection" : undefined,
     selection: body.edit === "selection" ? String(body.selection ?? "") : undefined,
+    ...(tool === "tutor" ? { board: String(body.board ?? "").slice(0, 12_000), printed: body.printed === true, history: readHistory(body.history) } : {}),
   };
   if (opts.edit === "selection" && !opts.selection?.trim()) throw new HttpError(400, "Highlight some text first.");
   if ((opts.selection?.length ?? 0) > MAX_INPUT_CHARS) throw new HttpError(413, "That's too much text at once. Highlight a smaller part.");
@@ -68,6 +69,18 @@ export const POST = handler(async (req) => {
   });
   return new Response(stream, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no" } });
 });
+
+/** The tutor's conversation so far: at most the last 10 messages, each trimmed, starting with the student. */
+function readHistory(raw: unknown): ToolOptions["history"] {
+  if (!Array.isArray(raw)) return undefined;
+  const turns = raw.slice(-10).flatMap((t: unknown) => {
+    const { role, content } = (t ?? {}) as { role?: unknown; content?: unknown };
+    const text = String(content ?? "").trim().slice(0, 6000);
+    return (role === "user" || role === "assistant") && text ? [{ role: role as "user" | "assistant", content: text }] : [];
+  });
+  while (turns.length && turns[0]!.role !== "user") turns.shift();
+  return turns.length ? turns : undefined;
+}
 
 /** Follow-ups: at most 8 earlier turns, each answer and question trimmed to a sane size. */
 function readThread(raw: unknown): ToolOptions["thread"] {

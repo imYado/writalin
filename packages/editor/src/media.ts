@@ -282,7 +282,9 @@ class MediaWidget extends WidgetType {
   }
 }
 
-const COLORS = ["#1f2328", "#d1242f", "#0969da", "#1a7f37", "#8250df", "#f2a900"];
+/** The pen colours, shared by drawings in notes and drawing on PDFs. */
+export const DRAWING_COLORS = ["#1f2328", "#d1242f", "#0969da", "#1a7f37", "#8250df", "#f2a900"] as const;
+const COLORS: readonly string[] = DRAWING_COLORS;
 
 /** A minimal canvas drawing surface: pen, highlighter, eraser, undo, clear. */
 class DrawingPad {

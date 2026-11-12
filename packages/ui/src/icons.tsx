@@ -65,6 +65,16 @@ const paths = {
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
   bell: "M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 21h4",
   more: "M4.5 12a1 1 0 1 0 2 0a1 1 0 1 0-2 0M11 12a1 1 0 1 0 2 0a1 1 0 1 0-2 0M17.5 12a1 1 0 1 0 2 0a1 1 0 1 0-2 0",
+  eraser: "m7 21-4.3-4.3a1 1 0 0 1 0-1.4l10-10a1 1 0 0 1 1.4 0l5.6 5.6a1 1 0 0 1 0 1.4L13 19M22 21H7M5 11l9 9",
+  pointer: "M4 4l7 16 2.5-6.5L20 11z",
+  square: "M4 5h16v14H4z",
+  circle: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z",
+  lineDiag: "M5 19 19 5",
+  arrowUpRight: "M6 18 18 6M9 6h9v9",
+  arrowRight: "M5 12h14M13 6l6 6-6 6",
+  arrowLeft: "M19 12H5M11 6l-6 6 6 6",
+  tutor: "M2 9l10-5 10 5-10 5zM6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5M22 9v6",
+  send: "M4 12 20 4l-6 16-3-7z",
 } as const;
 
 export type IconName = keyof typeof paths;

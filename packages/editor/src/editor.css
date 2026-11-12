@@ -179,3 +179,12 @@
 .w-editor .cm-card-srnote { color: var(--w-text-muted); font-size: 0.8em; }
 @media print { .w-editor .cm-card-ma { color: inherit; background: none; } }
 @media print { .w-editor .cm-card-a { color: inherit; background: none; } .w-editor .cm-card-show { display: none; } }
+
+/* Text the AI is still writing into the note. */
+.cm-ai-live { color: color-mix(in srgb, var(--w-text) 72%, transparent); }
+.cm-ai-caret {
+  display: inline-block; width: 2px; height: 1.05em; margin-left: 1px; vertical-align: text-bottom;
+  border-radius: 1px; background: var(--w-accent); animation: cm-ai-caret 0.9s steps(2, start) infinite;
+}
+@keyframes cm-ai-caret { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { .cm-ai-caret { animation: none; } }

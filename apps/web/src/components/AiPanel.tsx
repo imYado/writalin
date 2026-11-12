@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Icon, toast, type IconName } from "@writalin/ui";
 import { cardsFromText, formatCards, parseQuiz, type QuizQuestion, type Vault } from "@writalin/vault";
 import { CardText } from "./CardText";
+import type { LiveWriter } from "@writalin/editor";
 import type { AiSourceText, WorkspaceAiSource } from "@writalin/workspaces";
 import { aiApi, ApiError, type Account, type AiState, type AiTool } from "../api";
 import { isEditAnswer, parseEdits, type AiEdit } from "../aiEdits";
@@ -44,6 +45,8 @@ interface Props {
   insert: (markdown: string) => void;
   /** Take back what was just inserted. */
   undo?: () => void;
+  /** Start showing the answer in the note while it is still being written. */
+  live?: () => LiveWriter | null;
   onOpenSettings: () => void;
   /** Run a tool as soon as the panel can, e.g. picked from the right-click menu. */
   autoRun?: { tool: AiTool; nonce: number; source?: AiSource };
@@ -108,13 +111,15 @@ const doneLabel: Partial<Record<AiTool, string>> = {
   summarize: "Summary", explain: "Explanation", mainpoint: "Main point", steps: "Steps", flashcards: "Flashcards", quiz: "Quiz", whereWasI: "Recap",
 };
 
-export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, undo, onOpenSettings, autoRun, onStudy, onPlayQuiz, suggestEdits, openSource }: Props) {
+export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, canInsert, insert, undo, live, onOpenSettings, autoRun, onStudy, onPlayQuiz, suggestEdits, openSource }: Props) {
   const [enabled, setEnabled] = useState(vault.settings.aiEnabled);
   const [state, setState] = useState<AiState | null>(null);
   const [busy, setBusy] = useState<AiTool | null>(null);
   /** The answer so far, while it's still being written. */
   const [partial, setPartial] = useState<string | null>(null);
   const partialRef = useRef("");
+  /** True while the answer is being written straight into the note. */
+  const [inNote, setInNote] = useState(false);
   const stopRef = useRef<AbortController | null>(null);
   /** A slow step before the answer starts, e.g. reading scanned pages. */
   const [progress, setProgress] = useState<string | null>(null);
@@ -192,10 +197,31 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
     const stop = new AbortController();
     stopRef.current = stop;
     partialRef.current = "";
+    // New text is written into the note as it arrives. Flashcards are laid out once they're complete.
+    const liveOk = canInsert && !!live && tool !== "flashcards" && edit !== "force";
+    let writer: LiveWriter | null = null;
+    let tried = false;
     try {
       const r = await aiApi.run(tool, text, q, { quizKind, count: quizCount, extra: extra.trim() || undefined, edit, signal: stop.signal }, (soFar) => {
         partialRef.current = soFar;
         setPartial(soFar);
+        if (!liveOk) return;
+        if (isEditAnswer(soFar)) {
+          // It turned out to be changes to approve, not new text.
+          writer?.end();
+          writer = null;
+          tried = true;
+          return setInNote(false);
+        }
+        if (!writer && !tried) {
+          // Wait for enough of the answer to tell new text from changes.
+          const head = soFar.trimStart();
+          if (head.length < 12 || /^(?:@|```)/.test(head)) return;
+          tried = true;
+          writer = live!();
+          setInNote(!!writer);
+        }
+        writer?.write(soFar);
       });
       void aiApi.state().then(setState).catch(() => {});
       return r.text;
@@ -205,6 +231,9 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       return null;
     } finally {
       stopRef.current = null;
+      // The finished answer goes in as one change, so one Undo takes it out.
+      (writer as LiveWriter | null)?.end();
+      setInNote(false);
     }
   };
 
@@ -313,6 +342,15 @@ export function AiPanel({ vault, account, getSource, workspace, focusWorkspace, 
       </div>
     );
   };
+  // While the answer is written into the note, the panel shrinks out of the way.
+  if (busy && inNote) {
+    return (
+      <div className="ai-panel ai-writing" aria-live="polite">
+        <span className="ai-writing-label"><Icon name="sparkle" size={14} /> Writing in your note…</span>
+        <button className="w-btn w-btn-small" onClick={() => stopRef.current?.abort()}><Icon name="close" size={14} /> Stop</button>
+      </div>
+    );
+  }
   return (
     <div className="ai-panel">
       <form className="ai-ask" onSubmit={(e) => { e.preventDefault(); void run("ask"); }}>
