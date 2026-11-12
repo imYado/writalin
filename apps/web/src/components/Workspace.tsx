@@ -621,7 +621,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     board: async () => currentBoard() ?? (await openBlankBoard()),
     pointing: async () => {
       // The page they pointed at most recently, if that was a moment ago rather than earlier in the day.
-      const all = await Promise.all([...boards.current.values()].map((b) => b.pointed().catch(() => null)));
+      const all = await Promise.all([...boards.current.values()].map((b) => b.pointed().then((p) => p && { ...p, board: b }).catch(() => null)));
       const latest = all.filter((p): p is NonNullable<typeof p> => !!p).sort((a, b) => b.at - a.at)[0];
       return latest && Date.now() - latest.at < 5 * 60_000 ? latest : null;
     },
@@ -681,6 +681,8 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             boardBlank={currentBoard()?.blank ?? true}
             reading={studyLabel}
             onNewBoard={() => void openBlankBoard()}
+            onUndo={() => void currentBoard()?.undo(1)}
+            onRedo={() => void currentBoard()?.redo(1)}
             onOpenSettings={() => { setDockOpen(null); setSettingsOpen("ai"); }}
             onPlayQuiz={(questions) => setQuiz({ questions, title: "Quiz from your tutor" })}
           />

@@ -19,7 +19,7 @@ export type TutorTool =
 
 const SIZES = new Set(["s", "m", "l", "xl"]);
 const COLORS = new Set(["black", "red", "blue", "green", "purple", "orange", "yellow"]);
-const COMMAND = /^(say|write|text|line|arrow|rect|ellipse|circle|draw|highlight|cover|figure|end|page|erase|card|flashcard|note|task|quiz|timer)\b[ \t]*([^:]*?)[ \t]*(?::[ \t]?(.*))?$/i;
+const COMMAND = /^(say|write|text|line|arrow|rect|ellipse|circle|draw|highlight|cover|figure|end|page|erase|read|undo|redo|card|flashcard|note|task|quiz|timer)\b[ \t]*([^:]*?)[ \t]*(?::[ \t]?(.*))?$/i;
 
 export function parseTutorLine(raw: string): TutorStep | null {
   // Models like to dress lines up as list items or code; take that off.
@@ -54,6 +54,14 @@ export function parseTutorLine(raw: string): TutorStep | null {
     case "cover":
       if (stray || nums.length < 4) return { say: line };
       return { op: word, x: nums[0]!, y: nums[1]!, w: nums[2]!, h: nums[3]!, color };
+    case "read":
+      if (stray || nums.length < 4 || rest) return { say: line };
+      return { op: "read", x: nums[0]!, y: nums[1]!, w: nums[2]!, h: nums[3]! };
+    case "undo":
+    case "redo":
+      // "undo", "undo 3", "undo 2 steps"; a sentence is not.
+      if (rest || words.some((w) => !Number.isFinite(Number(w)) && !/^(steps?|last|the)$/i.test(w))) return { say: line };
+      return { op: word, steps: Math.min(50, Math.max(1, Math.round(nums[0] ?? 1))) };
     case "ellipse":
     case "circle": {
       if (stray || nums.length < 3) return { say: line };

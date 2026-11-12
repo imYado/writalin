@@ -124,6 +124,8 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   const [live, setLive] = useState<Record<string, MarkLive>>({});
   const undoStack = useRef<PdfMark[][]>([]);
   const [undoable, setUndoable] = useState(0);
+  const redoStack = useRef<PdfMark[][]>([]);
+  const [redoable, setRedoable] = useState(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveMarksNow = useCallback(() => {
     if (!saveTimer.current) return;
@@ -133,7 +135,12 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     void vault.setPdfMarks(path, marksNow.current.filter((m) => m.kind !== "text" || m.text.trim())).catch(() => toast("Couldn't save what you drew. Try again.", { tone: "warn" }));
   }, [vault, path]);
   /** Change what's on the pages; saved a moment later. */
-  const commitMarks = useCallback((next: PdfMark[], opts: { undo?: boolean } = {}) => {
+  const commitMarks = useCallback((next: PdfMark[], opts: { undo?: boolean; keepRedo?: boolean } = {}) => {
+    // Anything new means there is nothing left to redo.
+    if (!opts.keepRedo && redoStack.current.length) {
+      redoStack.current = [];
+      setRedoable(0);
+    }
     if (opts.undo !== false) {
       undoStack.current.push(marksNow.current);
       if (undoStack.current.length > 100) undoStack.current.shift();
@@ -150,6 +157,8 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     setMarks([]);
     undoStack.current = [];
     setUndoable(0);
+    redoStack.current = [];
+    setRedoable(0);
     setSelected(null);
     setEditing(null);
     void vault.pdfMarks(path).then((m) => {
@@ -164,11 +173,25 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   }, [vault, path, saveMarksNow]);
   const undoMark = useCallback(() => {
     const prev = undoStack.current.pop();
-    if (!prev) return;
+    if (!prev) return false;
+    setUndoable(undoStack.current.length);
+    redoStack.current.push(marksNow.current);
+    setRedoable(redoStack.current.length);
+    setSelected(null);
+    setEditing(null);
+    commitMarks(prev, { undo: false, keepRedo: true });
+    return true;
+  }, [commitMarks]);
+  const redoMark = useCallback(() => {
+    const next = redoStack.current.pop();
+    if (!next) return false;
+    setRedoable(redoStack.current.length);
+    undoStack.current.push(marksNow.current);
     setUndoable(undoStack.current.length);
     setSelected(null);
     setEditing(null);
-    commitMarks(prev, { undo: false });
+    commitMarks(next, { undo: false, keepRedo: true });
+    return true;
   }, [commitMarks]);
   const removeMark = useCallback((id: string) => {
     const m = marksNow.current.find((x) => x.id === id);
@@ -581,15 +604,37 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     el.style.transform = `translate(${pb.left - rb.left + root.scrollLeft + x * u}px, ${pb.top - rb.top + root.scrollTop + y * u}px)`;
     el.dataset.mode = mode;
     el.dataset.on = "1";
+    // One cursor at a time: it leaves the other PDF when it comes to this one.
+    for (const other of document.querySelectorAll<HTMLElement>(".pdf-hand[data-on]")) if (other !== el) delete other.dataset.on;
     handAt.current = { page: n, x, y };
     clearTimeout(handIdle.current);
-    handIdle.current = setTimeout(() => {
-      delete el.dataset.on;
-      handAt.current = null;
-    }, 1600);
+    // It stays on the page; once the writing stops it rests as a cursor.
+    handIdle.current = setTimeout(() => (el.dataset.mode = "move"), 900);
   };
+  // Zooming or resizing moves the pages: keep the hand on its spot.
+  useEffect(() => {
+    const again = () => {
+      const at = handAt.current;
+      const el = hand.current;
+      if (!at || !el) return;
+      el.style.transition = "none";
+      placeHand(at.page, at.x, at.y, el.dataset.mode === "pen" ? "pen" : "move");
+    };
+    const id = requestAnimationFrame(again);
+    window.addEventListener("resize", again);
+    return () => {
+      cancelAnimationFrame(id);
+      window.removeEventListener("resize", again);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom, doc?.numPages]);
+  // Another file: the hand leaves with the old one.
+  useEffect(() => {
+    handAt.current = null;
+    if (hand.current) delete hand.current.dataset.on;
+  }, [path]);
   /** Glide to where the next thing starts, as a cursor. */
-  const moveHand = async (n: number, x: number, y: number) => {
+  const moveHand = async (n: number, x: number, y: number, over?: number) => {
     const el = hand.current;
     if (!el || hurried.current) return;
     const from = handAt.current;
@@ -600,13 +645,40 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     }
     const far = from.page === n ? Math.hypot(x - from.x, y - from.y) : 60;
     if (far < 1.5) return;
-    const ms = clamp(far * 9, 160, 460);
-    el.style.transition = `transform ${ms}ms ease-in-out`;
+    const ms = over ?? clamp(far * 9, 160, 460);
+    el.style.transition = `transform ${ms}ms ${over ? "linear" : "ease-in-out"}`;
     placeHand(n, x, y, "move");
     await wait(ms);
     el.style.transition = "none";
   };
   useEffect(() => () => clearTimeout(handIdle.current), []);
+  const band = useRef<HTMLDivElement>(null);
+  /** Read a line of the page: the cursor runs along it, with a soft band growing behind it. */
+  const readLine = async (n: number, x: number, y: number, w: number, h: number) => {
+    const root = scroller.current;
+    const pg = pageEl(n);
+    if (!root || !pg || hurried.current) return;
+    follow(n, y);
+    await moveHand(n, x, y + h * 0.85);
+    const pb = pg.getBoundingClientRect();
+    const rb = root.getBoundingClientRect();
+    const u = pb.width / 100;
+    const ms = clamp(w * 30, 500, 2400);
+    const b = band.current;
+    if (b) {
+      b.style.transition = "none";
+      b.style.left = `${pb.left - rb.left + root.scrollLeft + x * u}px`;
+      b.style.top = `${pb.top - rb.top + root.scrollTop + (y - h * 0.1) * u}px`;
+      b.style.height = `${h * 1.2 * u}px`;
+      b.style.width = "0px";
+      b.style.opacity = "1";
+      void b.offsetWidth;
+      b.style.transition = `width ${ms}ms linear, opacity 400ms ease`;
+      b.style.width = `${w * u}px`;
+    }
+    await moveHand(n, x + w, y + h * 0.85, ms);
+    if (b) b.style.opacity = "0";
+  };
   /** Where typed text has reached, in page units: the end of what is shown so far. */
   const caretOf = (m: PdfMark): [number, number] | null => {
     const pg = pageEl(m.page);
@@ -635,7 +707,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       follow(m.page, m.y);
       await moveHand(m.page, m.x, m.y + m.size * 1.1);
       setFor({ typed: 0 });
-      commitMarks([...marksNow.current, m], { undo: false });
+      commitMarks([...marksNow.current, m]);
       follow(m.page, m.y);
       const total = m.text.length;
       const ms = clamp(total * 22, 250, 2200);
@@ -658,7 +730,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     follow(m.page, markBottom(m));
     await moveHand(m.page, route[0]![0], route[0]![1]);
     setFor({ draw: ms });
-    commitMarks([...marksNow.current, m], { undo: false });
+    commitMarks([...marksNow.current, m]);
     const start = performance.now();
     while (!hurried.current) {
       const f = (performance.now() - start) / ms;
@@ -701,6 +773,11 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       p = clamp(p, 1, d.numPages);
       const low = lowestMark(p);
       pen.current = { page: p, y: low ? low + 2.2 : BOARD_MARGIN, fig: null };
+      // The tutor's cursor is on the page from the start.
+      if (!handAt.current && hand.current) {
+        hand.current.style.transition = "none";
+        placeHand(p, BOARD_MARGIN, Math.min(pen.current.y + 2, pageUnits(p) - 4), "move");
+      }
     },
     async describe() {
       const d = docNow.current;
@@ -762,7 +839,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       const dy = at.fig ? at.fig.y0 : 0;
       const X = (x: number) => r1(clamp(x, 0, 100));
       const Y = (y: number) => r1(clamp(y + dy, 0, high));
-      const base = { id: newMarkId(), page: at.page, color: boardColor(op.op === "figure" || op.op === "end" || op.op === "page" || op.op === "erase" ? undefined : op.color) };
+      const base = { id: newMarkId(), page: at.page, color: boardColor("color" in op ? op.color : undefined) };
       /** After something placed freely, the writing carries on below it. */
       const below = (y: number) => {
         if (!at.fig) at.y = Math.max(at.y, y + 1.8);
@@ -831,6 +908,18 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         case "page":
           await nextPage();
           break;
+        case "read": {
+          const p = clamp(op.page ?? at.page, 1, d.numPages);
+          const x = clamp(op.x, 0, 100);
+          await readLine(p, x, op.page ? op.y : Y(op.y), clamp(op.w, 1, 100 - x), clamp(op.h, 1, 12));
+          break;
+        }
+        case "undo":
+          board.undo(op.steps);
+          break;
+        case "redo":
+          board.redo(op.steps);
+          break;
         case "erase": {
           const kept = marksNow.current.filter((m) => m.page !== at.page);
           if (kept.length !== marksNow.current.length) commitMarks(kept);
@@ -847,7 +936,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       const name = basename(path);
       const short = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
       const picked = sel?.text.replace(/\s+/g, " ").trim();
-      if (sel && picked) return { at: Date.now(), label: `page ${sel.page}: “${short(picked, 60)}”`, text: `The student selected these words on page ${sel.page} of “${name}”:\n${picked.slice(0, 1200)}` };
+      if (sel && picked) return { at: Date.now(), page: sel.page, label: `page ${sel.page}: “${short(picked, 60)}”`, text: `The student selected these words on page ${sel.page} of “${name}”:\n${picked.slice(0, 1200)}` };
       const pt = pointAt.current;
       if (!pt) return null;
       const out = [`The student's cursor is on page ${pt.page} of “${name}”, at x=${r1(pt.x)} y=${r1(pt.y)} (the page is 100 wide).`];
@@ -876,12 +965,25 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         for (const m of near) out.push(`text at x=${r1(m.x)} y=${r1(m.y)}: ${short(m.text.replace(/\s+/g, " "), 160)}`);
         label ||= near[0]!.text.replace(/\s+/g, " ");
       }
-      return { at: pt.t, label: label ? `page ${pt.page}: “${short(label, 60)}”` : `a spot on page ${pt.page}`, text: out.join("\n").slice(0, 1900) };
+      return { at: pt.t, page: pt.page, label: label ? `page ${pt.page}: “${short(label, 60)}”` : `a spot on page ${pt.page}`, text: out.join("\n").slice(0, 1900) };
     },
     remove(ids) {
       const gone = new Set(ids);
-      if (marksNow.current.some((m) => gone.has(m.id))) commitMarks(marksNow.current.filter((m) => !gone.has(m.id)), { undo: false });
+      if (marksNow.current.some((m) => gone.has(m.id))) commitMarks(marksNow.current.filter((m) => !gone.has(m.id)));
       pen.current = null;
+    },
+    undo(steps = 1) {
+      let n = 0;
+      while (n < steps && undoMark()) n++;
+      // The writing carries on from what is left.
+      if (n) pen.current = null;
+      return n;
+    },
+    redo(steps = 1) {
+      let n = 0;
+      while (n < steps && redoMark()) n++;
+      if (n) pen.current = null;
+      return n;
     },
     hurry() {
       hurried.current = true;
@@ -907,6 +1009,8 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       describe: () => boardNow.current.describe(),
       apply: (op) => boardNow.current.apply(op),
       pointed: () => boardNow.current.pointed(),
+      undo: (n) => boardNow.current.undo(n),
+      redo: (n) => boardNow.current.redo(n),
       remove: (ids) => boardNow.current.remove(ids),
       hurry: () => boardNow.current.hurry(),
     });
@@ -1005,6 +1109,8 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
           onSize={setSizeIndex}
           canUndo={undoable > 0}
           onUndo={undoMark}
+          canRedo={redoable > 0}
+          onRedo={redoMark}
           canDelete={!!selected}
           onDelete={() => selected && removeMark(selected)}
           onDone={() => { setTool(null); setSelected(null); }}
@@ -1032,6 +1138,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
           {doc && Array.from({ length: doc.numPages }, (_, i) => (
             <PdfPage key={i} doc={doc} n={i + 1} scale={scale} cssZoom={zoom} textLayer highlights={highlights} marks={marks} markLayer={markLayer} pick={picked ? { checked: picked.has(i + 1), onToggle: () => togglePick(i + 1) } : undefined} />
           ))}
+          <div className="pdf-read-band" ref={band} aria-hidden />
           <div className="pdf-hand" ref={hand} aria-hidden>
             <svg className="pdf-hand-pen" viewBox="0 0 24 24" width="26" height="26"><path d="M3 21l1.2-4.6L16.6 4a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L7.6 19.8z" /><path d="M14.5 6.1l3.4 3.4" /></svg>
             <svg className="pdf-hand-cursor" viewBox="0 0 24 24" width="22" height="22"><path d="M4 3l15 8-6.5 1.8L10 19.5z" /></svg>

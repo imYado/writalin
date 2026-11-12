@@ -427,7 +427,7 @@ const SIZE_LABELS = ["Thin", "Medium", "Thick"];
 const TEXT_SIZE_LABELS = ["Small", "Medium", "Large"];
 
 /** The drawing tools: the same pen, highlighter, eraser, colours and sizes as drawings in notes, plus text and shapes. */
-export function MarkToolbar({ tool, onTool, color, onColor, sizeIndex, onSize, canUndo, onUndo, canDelete, onDelete, onDone }: {
+export function MarkToolbar({ tool, onTool, color, onColor, sizeIndex, onSize, canUndo, onUndo, canRedo, onRedo, canDelete, onDelete, onDone }: {
   tool: MarkTool;
   onTool: (t: MarkTool) => void;
   color: string;
@@ -436,6 +436,8 @@ export function MarkToolbar({ tool, onTool, color, onColor, sizeIndex, onSize, c
   onSize: (i: number) => void;
   canUndo: boolean;
   onUndo: () => void;
+  canRedo: boolean;
+  onRedo: () => void;
   /** Something is picked with Move. */
   canDelete: boolean;
   onDelete: () => void;
@@ -468,6 +470,9 @@ export function MarkToolbar({ tool, onTool, color, onColor, sizeIndex, onSize, c
         <span className="pdf-draw-sep" />
         <button className="pdf-draw-btn" disabled={!canUndo} aria-label="Undo" title="Undo" onClick={onUndo}>
           <Icon name="undo" size={17} />
+        </button>
+        <button className="pdf-draw-btn" disabled={!canRedo} aria-label="Redo" title="Redo" onClick={onRedo}>
+          <Icon name="redo" size={17} />
         </button>
         {canDelete && (
           <button className="pdf-draw-btn" aria-label="Delete" title="Delete what's picked" onClick={onDelete}>

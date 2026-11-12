@@ -17,6 +17,9 @@ interface Props {
   reading: string | null;
   /** Open an empty PDF on the right to use as the board. */
   onNewBoard: () => void;
+  /** Step back, or forward again, through what is on the page (the tutor's work and the student's own). */
+  onUndo: () => void;
+  onRedo: () => void;
   onOpenSettings: () => void;
   /** Play a quiz the tutor made. */
   onPlayQuiz: (questions: QuizQuestion[]) => void;
@@ -37,7 +40,7 @@ const STARTERS = ["Teach me what's open, step by step", "Explain it with a drawi
  * does the teaching on the PDF, writing and drawing while you watch. You can
  * pause it, and write again without waiting for it to finish.
  */
-export function TutorPanel({ vault, account, tutor, boardName, boardBlank, reading, onNewBoard, onOpenSettings, onPlayQuiz }: Props) {
+export function TutorPanel({ vault, account, tutor, boardName, boardBlank, reading, onNewBoard, onUndo, onRedo, onOpenSettings, onPlayQuiz }: Props) {
   const [enabled, setEnabled] = useState(vault.settings.aiEnabled);
   const [q, setQ] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
@@ -109,7 +112,7 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
             <div key={m.id} className={`tutor-msg tutor-${m.from}${m.error ? " tutor-error" : ""}`}>
               {m.from === "you" ? m.text : m.text ? <CardText text={m.text} /> : null}
               {m.pointing && <span className="tutor-pointing">Pointing at {m.pointing}</span>}
-              {m.queued && <span className="tutor-queued">Waiting for the tutor to finish</span>}
+              {m.queued && <span className="tutor-queued">The tutor will stop for this at the end of its point</span>}
               {m.working && <span className="tutor-working">{paused ? "Paused" : m.text ? "Working on the page…" : "Thinking…"}</span>}
               {m.saved && savedLine(m.saved) && <span className="tutor-working">{savedLine(m.saved)}</span>}
               {m.quiz && !m.working && (
@@ -120,6 +123,7 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
               {m.from === "tutor" && !m.working && !!m.drawn && (
                 <button className="ai-link tutor-undo" onClick={() => tutor.undo(m.id)}>Take it off the page</button>
               )}
+              {m.interrupted && <span className="tutor-working">Stopped here to hear you.</span>}
               {m.undone && <span className="tutor-working">Taken off the page.</span>}
             </div>
           ))}
@@ -160,7 +164,7 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
             <Icon name="mic" size={16} />
           </button>
         )}
-        <button type="submit" className="w-btn w-btn-primary" disabled={tutor.listening || !q.trim()} aria-label={busy ? "Send after the tutor finishes" : "Send"} title={busy ? "Sent as soon as the tutor finishes" : "Send"}><Icon name="send" size={16} /></button>
+        <button type="submit" className="w-btn w-btn-primary" disabled={tutor.listening || !q.trim()} aria-label={busy ? "Send; the tutor stops for it at the end of its point" : "Send"} title={busy ? "The tutor stops for it at the end of its point" : "Send"}><Icon name="send" size={16} /></button>
       </form>
       {tutor.micError && <p className="tutor-mic-error w-small" role="alert">{tutor.micError}</p>}
       <div className="tutor-controls">
@@ -170,6 +174,12 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
               <Icon name={paused ? "play" : "pause"} size={13} /> {paused ? "Resume" : "Pause"}
             </button>
             <button className="w-btn w-btn-small" onClick={tutor.stop}><Icon name="close" size={13} /> Stop</button>
+          </>
+        )}
+        {boardName && (
+          <>
+            <button className="w-btn w-btn-small w-btn-ghost" onClick={onUndo} aria-label="Undo a step on the page" title="Undo the last step on the page. Tap again to go further back."><Icon name="undo" size={14} /> Undo</button>
+            <button className="w-btn w-btn-small w-btn-ghost" onClick={onRedo} aria-label="Redo a step on the page" title="Put back the step you undid"><Icon name="redo" size={14} /> Redo</button>
           </>
         )}
         {tutor.canSpeak && (
