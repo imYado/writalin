@@ -5,7 +5,7 @@ import { AI_TOOLS, MAX_INPUT_CHARS, resolveKey, runTool, takeQuota, type AiTool,
 /** Run one study tool on text the person chose. Signed-in only; keys stay on the server. */
 export const POST = handler(async (req) => {
   const user = await requireUser(req);
-  const body = await readJson<{ tool?: string; text?: string; question?: string; quizKind?: string; count?: number; extra?: string; stream?: boolean; thread?: unknown; edit?: string; selection?: string; board?: string; printed?: boolean; history?: unknown }>(req, 400 * 1024);
+  const body = await readJson<{ tool?: string; text?: string; question?: string; quizKind?: string; count?: number; extra?: string; stream?: boolean; thread?: unknown; edit?: string; selection?: string; board?: string; pointing?: string; printed?: boolean; history?: unknown }>(req, 400 * 1024);
   const tool = body.tool as AiTool;
   if (!tool || !Object.hasOwn(AI_TOOLS, tool)) throw new HttpError(400, "Unknown AI tool.");
   const text = String(body.text ?? "").trim();
@@ -24,7 +24,7 @@ export const POST = handler(async (req) => {
     thread: readThread(body.thread),
     edit: body.edit === "force" ? "force" : body.edit === "auto" ? "auto" : body.edit === "selection" ? "selection" : undefined,
     selection: body.edit === "selection" ? String(body.selection ?? "") : undefined,
-    ...(tool === "tutor" ? { board: String(body.board ?? "").slice(0, 12_000), printed: body.printed === true, history: readHistory(body.history) } : {}),
+    ...(tool === "tutor" ? { board: String(body.board ?? "").slice(0, 12_000), pointing: String(body.pointing ?? "").trim().slice(0, 2000) || undefined, printed: body.printed === true, history: readHistory(body.history) } : {}),
   };
   if (opts.edit === "selection" && !opts.selection?.trim()) throw new HttpError(400, "Highlight some text first.");
   if ((opts.selection?.length ?? 0) > MAX_INPUT_CHARS) throw new HttpError(413, "That's too much text at once. Highlight a smaller part.");

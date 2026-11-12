@@ -77,6 +77,37 @@ export function markLength(m: PdfMark): number {
   return m.kind === "line" || m.kind === "arrow" ? Math.hypot(w, h) : m.kind === "ellipse" ? Math.PI * (w + h) / 2 : 2 * (w + h);
 }
 
+/** The way a hand goes to draw a mark, as points in page units (the same way round as it is drawn). */
+export function markRoute(m: Exclude<PdfMark, { kind: "text" }>): [number, number][] {
+  if (m.kind === "stroke") return m.points.length ? m.points : [[0, 0]];
+  if (m.kind === "line" || m.kind === "arrow") return [[m.x1, m.y1], [m.x2, m.y2]];
+  const x = Math.min(m.x1, m.x2);
+  const y = Math.min(m.y1, m.y2);
+  const w = Math.abs(m.x2 - m.x1);
+  const h = Math.abs(m.y2 - m.y1);
+  if (m.kind === "rect") return [[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]];
+  if (m.kind === "ellipse") return Array.from({ length: 33 }, (_, i) => [x + w / 2 + (w / 2) * Math.cos((i / 32) * 2 * Math.PI), y + h / 2 + (h / 2) * Math.sin((i / 32) * 2 * Math.PI)] as [number, number]);
+  // A filled box (highlight, cover): swept left to right.
+  return [[x, y + h / 2], [x + w, y + h / 2]];
+}
+
+/** The point a fraction `f` (0 to 1) of the way along a route. */
+export function pointAlong(route: [number, number][], f: number): [number, number] {
+  const first = route[0] ?? [0, 0];
+  if (route.length < 2 || f <= 0) return first;
+  const lens = route.slice(1).map((p, i) => Math.hypot(p[0] - route[i]![0], p[1] - route[i]![1]));
+  let left = lens.reduce((a, b) => a + b, 0) * Math.min(1, f);
+  for (let i = 0; i < lens.length; i++) {
+    const len = lens[i]!;
+    if (left <= len || i === lens.length - 1) {
+      const t = len ? Math.min(1, left / len) : 0;
+      return [route[i]![0] + (route[i + 1]![0] - route[i]![0]) * t, route[i]![1] + (route[i + 1]![1] - route[i]![1]) * t];
+    }
+    left -= len;
+  }
+  return route[route.length - 1]!;
+}
+
 /** Rendered Markdown for text marks, kept so a mark shows at once when it's seen again. */
 const htmlCache = new Map<string, string>();
 export type RenderText = (markdown: string) => Promise<string>;

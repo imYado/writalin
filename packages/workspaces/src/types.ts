@@ -90,6 +90,8 @@ export interface PdfBoard {
   describe(): Promise<string>;
   /** Do one step, drawn or typed out live. Resolves, with the marks it added, once it's on the page. */
   apply(op: BoardOp): Promise<string[]>;
+  /** What the student is pointing at (their cursor, finger or selection) and when they last pointed. */
+  pointed(): Promise<{ at: number; label: string; text: string } | null>;
   /** Take marks back off (undo a round of work). */
   remove(ids: string[]): void;
   /** Finish whatever is being drawn at once. */

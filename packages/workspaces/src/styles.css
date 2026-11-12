@@ -248,3 +248,12 @@ g.pdf-mark-selected { filter: drop-shadow(0 0 0.35px var(--w-accent)) drop-shado
 .pdf-draw-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--w-surface), 0 0 0 4px var(--swatch); }
 .pdf-draw-sep { flex: none; width: 1px; height: 20px; margin: 0 5px; background: color-mix(in srgb, var(--w-text) 14%, transparent); }
 .pdf-add-page { flex: none; margin-bottom: 8px; }
+
+/* The tutor's hand: a pen where it writes or draws, a cursor while it moves to the next spot. */
+.pdf-hand { position: absolute; left: 0; top: 0; z-index: 9; width: 0; height: 0; pointer-events: none; opacity: 0; transition: none; will-change: transform; }
+.pdf-hand[data-on] { opacity: 1; }
+.pdf-hand svg { position: absolute; display: none; fill: var(--w-accent, #6d5efc); stroke: #fff; stroke-width: 1.4; stroke-linejoin: round; filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.35)); }
+/* The pen's tip, and the cursor's tip, sit exactly on the spot. */
+.pdf-hand-pen { left: -3px; top: -23px; }
+.pdf-hand-cursor { left: -4px; top: -3px; }
+.pdf-hand[data-mode="pen"] .pdf-hand-pen, .pdf-hand[data-mode="move"] .pdf-hand-cursor { display: block; }

@@ -108,6 +108,7 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
           {log.map((m) => (
             <div key={m.id} className={`tutor-msg tutor-${m.from}${m.error ? " tutor-error" : ""}`}>
               {m.from === "you" ? m.text : m.text ? <CardText text={m.text} /> : null}
+              {m.pointing && <span className="tutor-pointing">Pointing at {m.pointing}</span>}
               {m.queued && <span className="tutor-queued">Waiting for the tutor to finish</span>}
               {m.working && <span className="tutor-working">{paused ? "Paused" : m.text ? "Working on the page…" : "Thinking…"}</span>}
               {m.saved && savedLine(m.saved) && <span className="tutor-working">{savedLine(m.saved)}</span>}
@@ -135,8 +136,9 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
           ref={input}
           className="w-input tutor-input"
           rows={1}
-          value={q}
-          placeholder={busy ? "Write your next message…" : log.length ? "Reply to your tutor…" : "What should we learn? Any topic."}
+          value={tutor.listening ? tutor.heard : q}
+          readOnly={tutor.listening}
+          placeholder={tutor.listening ? "Listening… say it, then pause" : busy ? "Write your next message…" : log.length ? "Reply to your tutor…" : "What should we learn? Any topic."}
           aria-label="Message to your tutor"
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
@@ -146,8 +148,21 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
             }
           }}
         />
-        <button type="submit" className="w-btn w-btn-primary" disabled={!q.trim()} aria-label={busy ? "Send after the tutor finishes" : "Send"} title={busy ? "Sent as soon as the tutor finishes" : "Send"}><Icon name="send" size={16} /></button>
+        {tutor.canListen && (
+          <button
+            type="button"
+            className={`w-btn tutor-mic${tutor.listening ? " tutor-mic-on" : ""}`}
+            aria-pressed={tutor.listening}
+            aria-label={tutor.listening ? "Stop listening and send" : "Talk to your tutor"}
+            title={tutor.listening ? "Listening. Tap to send what you said." : "Talk instead of typing. Point at something on the page first and say “I don't understand this”."}
+            onClick={tutor.listen}
+          >
+            <Icon name="mic" size={16} />
+          </button>
+        )}
+        <button type="submit" className="w-btn w-btn-primary" disabled={tutor.listening || !q.trim()} aria-label={busy ? "Send after the tutor finishes" : "Send"} title={busy ? "Sent as soon as the tutor finishes" : "Send"}><Icon name="send" size={16} /></button>
       </form>
+      {tutor.micError && <p className="tutor-mic-error w-small" role="alert">{tutor.micError}</p>}
       <div className="tutor-controls">
         {busy && (
           <>
