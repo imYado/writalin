@@ -13,6 +13,8 @@ export interface TutorMsg {
   error?: boolean;
   /** Sent while the tutor was busy; it is read once the tutor finishes. */
   queued?: boolean;
+  /** Cut short at the end of a point, because the student said something. */
+  interrupted?: boolean;
   /** How many things this reply put on the board (they can be taken back). */
   drawn?: number;
   undone?: boolean;
@@ -41,7 +43,7 @@ export interface TutorHost {
     timer: () => void;
   };
   /** What the student is pointing at on a page right now (cursor, finger or selection), if anything. */
-  pointing: () => Promise<{ label: string; text: string } | null>;
+  pointing: () => Promise<{ label: string; text: string; page: number; board: PdfBoard } | null>;
   /** The student's own standing instructions for the tutor. */
   instructions: () => string;
 }
@@ -114,6 +116,15 @@ const MIC_ERRORS: Record<string, string> = {
   "language-not-supported": "This browser can't listen in that language.",
 };
 
+/** One question from the student, with what they were pointing at when they asked. */
+interface Asked {
+  id: string;
+  q: string;
+  pointing?: string;
+  /** The PDF and page they pointed at, so the tutor's cursor can read along there. */
+  at?: { board: PdfBoard; page: number };
+}
+
 /** The right answer comes first from the tutor; the student sees the options mixed. */
 function quizQuestion(question: string, options: string[]): QuizQuestion {
   const right = options[0]!;
@@ -147,7 +158,7 @@ export function useTutor(host: TutorHost) {
   const work = useRef(new Map<string, { board: PdfBoard; ids: string[] }>());
   const busyNow = useRef(false);
   /** Questions sent while the tutor was busy, in order. */
-  const queue = useRef<{ id: string; q: string; pointing?: string }[]>([]);
+  const queue = useRef<Asked[]>([]);
   const pausedNow = useRef(false);
   const resumers = useRef<(() => void)[]>([]);
   const voiceNow = useRef(voice);
@@ -230,12 +241,16 @@ export function useTutor(host: TutorHost) {
       }
     });
 
-  const answer = async (q: string, pointing?: string) => {
+  const answer = async ({ q, pointing, at }: Asked) => {
     const id = newId();
     setLog((l) => [...l, { id, from: "tutor", text: "", working: true }]);
     const stop = new AbortController();
     stopRef.current = stop;
     let raw = "";
+    /** The lines carried out so far: what the tutor remembers if it is cut short. */
+    const did: string[] = [];
+    let cut = false;
+    let points = 0;
     try {
       const board = await hostNow.current.board();
       if (!board) throw new ApiError(0, "Open a PDF or a blank PDF first, so there is something to write on.");
@@ -263,11 +278,19 @@ export function useTutor(host: TutorHost) {
               await talking;
               await unpaused();
               if (stop.signal.aborted) return;
+              // A new `say` starts a new point. If the student said something meanwhile, stop here and hear them.
+              if (points > 0 && queue.current.length) {
+                cut = true;
+                return stop.abort();
+              }
+              points++;
+              did.push(line);
               patch(id, (m) => ({ ...m, text: m.text ? `${m.text}\n${step.say}` : step.say }));
               talking = speak(step.say, stop.signal);
               return;
             }
             if ("tool" in step) {
+              did.push(line);
               const tools = hostNow.current.tools;
               if (step.tool === "card") {
                 await tools.card(step.question, step.answer);
@@ -287,6 +310,12 @@ export function useTutor(host: TutorHost) {
               }
               return patch(id, (m) => ({ ...m, saved: { ...saved } }));
             }
+            did.push(line);
+            // Reading goes where the student pointed, when that is another PDF than the board.
+            if (step.op === "read" && at) {
+              if (at.board !== board && board.blank) return void (await at.board.apply({ ...step, page: at.page }));
+              if (at.board === board) return void (await board.apply({ ...step, page: at.page }));
+            }
             const added = await board.apply(step);
             if (added.length) {
               ids.push(...added);
@@ -297,7 +326,7 @@ export function useTutor(host: TutorHost) {
         fed = Math.max(fed, lines.length);
       };
       const material_ = (material?.text ?? "").slice(0, MAX_MATERIAL);
-      const r = await aiApi.run("tutor", material_, q, { board: about, pointing, printed: !board.blank, history: history.current.slice(-8), extra: hostNow.current.instructions().trim().slice(0, 1000) || undefined, signal: stop.signal }, (soFar) => {
+      const r = await aiApi.run("tutor", material_, q, { board: about, pointing: pointing && at ? `${pointing}\n${at.board === board ? "This is on the board page itself: `read` it and mark it there." : "This is on another PDF, open beside the board. You can `read` it with these positions (your cursor goes there), but write and draw only on the board; don't highlight it."}` : pointing, printed: !board.blank, history: history.current.slice(-8), extra: hostNow.current.instructions().trim().slice(0, 1000) || undefined, signal: stop.signal }, (soFar) => {
         raw = soFar;
         feed(completeLines(soFar));
       });
@@ -310,10 +339,10 @@ export function useTutor(host: TutorHost) {
       patch(id, (m) => ({ ...m, working: false, text: m.text || (ids.length ? "It's on the board." : m.saved || m.quiz ? "Done." : "I have nothing to add.") }));
     } catch (e) {
       const stopped = stop.signal.aborted;
-      // Stopped part-way: what's already on the board stays, and the tutor remembers it.
-      if (stopped && raw.trim()) history.current.push({ role: "user", content: q }, { role: "assistant", content: raw.slice(0, 5000) });
+      // Stopped part-way: what's already on the board stays, and the tutor remembers what it got through.
+      if (stopped && did.length) history.current.push({ role: "user", content: q }, { role: "assistant", content: did.join("\n").slice(0, 5000) });
       const message = stopped ? "" : e instanceof ApiError ? e.message : "Something went wrong. Try again.";
-      patch(id, (m) => ({ ...m, working: false, error: !stopped, text: stopped ? m.text || "Stopped." : message }));
+      patch(id, (m) => ({ ...m, working: false, error: !stopped, interrupted: cut || undefined, text: stopped ? m.text || "Stopped." : message }));
     } finally {
       stopRef.current = null;
     }
@@ -326,12 +355,13 @@ export function useTutor(host: TutorHost) {
     const mine = newId();
     setLog((l) => [...l, { id: mine, from: "you", text: q, spoken: how.spoken, queued: busyNow.current || undefined }]);
     // What they are pointing at is taken now, not when a waiting question is finally read.
-    const entry: { id: string; q: string; pointing?: string } = { id: mine, q };
+    const entry: Asked = { id: mine, q };
     const waiting = busyNow.current;
     if (waiting) queue.current.push(entry);
     const point = await hostNow.current.pointing().catch(() => null);
     if (point) {
       entry.pointing = point.text;
+      entry.at = { board: point.board, page: point.page };
       patch(mine, (m) => ({ ...m, pointing: point.label }));
     }
     if (waiting || busyNow.current) {
@@ -341,11 +371,11 @@ export function useTutor(host: TutorHost) {
     busyNow.current = true;
     setBusy(true);
     try {
-      let next: { id: string; q: string; pointing?: string } | undefined = entry;
+      let next: Asked | undefined = entry;
       while (next) {
         const now = next;
         patch(now.id, (m) => ({ ...m, queued: undefined }));
-        await answer(now.q, now.pointing);
+        await answer(now);
         next = queue.current.shift();
       }
     } finally {

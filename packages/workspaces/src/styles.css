@@ -257,3 +257,4 @@ g.pdf-mark-selected { filter: drop-shadow(0 0 0.35px var(--w-accent)) drop-shado
 .pdf-hand-pen { left: -3px; top: -23px; }
 .pdf-hand-cursor { left: -4px; top: -3px; }
 .pdf-hand[data-mode="pen"] .pdf-hand-pen, .pdf-hand[data-mode="move"] .pdf-hand-cursor { display: block; }
+.pdf-read-band { position: absolute; left: 0; top: 0; width: 0; z-index: 8; pointer-events: none; opacity: 0; border-radius: 3px; background: color-mix(in srgb, var(--w-accent, #6d5efc) 20%, transparent); }

@@ -73,6 +73,10 @@ export type BoardOp =
   /** Keep room for a drawing `height` units tall under the writing; shapes that follow are placed inside it. */
   | { op: "figure"; height: number }
   | { op: "end" }
+  /** Move the cursor along a line of the page, as if reading it. Nothing is added. */
+  | { op: "read"; x: number; y: number; w: number; h: number; page?: number }
+  /** Step back, or forward again, through what was put on the pages. */
+  | { op: "undo" | "redo"; steps: number }
   /** Carry on on a fresh page. */
   | { op: "page" }
   /** Wipe the page being worked on. */
@@ -91,7 +95,11 @@ export interface PdfBoard {
   /** Do one step, drawn or typed out live. Resolves, with the marks it added, once it's on the page. */
   apply(op: BoardOp): Promise<string[]>;
   /** What the student is pointing at (their cursor, finger or selection) and when they last pointed. */
-  pointed(): Promise<{ at: number; label: string; text: string } | null>;
+  pointed(): Promise<{ at: number; page: number; label: string; text: string } | null>;
+  /** Step back through what was put on the pages (by the student or the AI); says how many steps it took. */
+  undo(steps?: number): number;
+  /** Put back what was undone. */
+  redo(steps?: number): number;
   /** Take marks back off (undo a round of work). */
   remove(ids: string[]): void;
   /** Finish whatever is being drawn at once. */

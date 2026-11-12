@@ -89,4 +89,13 @@ describe("the tutor's voice", () => {
     expect(pickVoice([{ name: "Daniel", lang: "en-GB" }], "en-US", "")?.name).toBe("Daniel");
     expect(pickVoice(voices, "fr-FR", "")).toBeUndefined();
   });
+
+  it("reads along a line and steps back and forward", () => {
+    expect(parseTutorLine("read 6.7 19.1 82.8 2")).toEqual({ op: "read", x: 6.7, y: 19.1, w: 82.8, h: 2 });
+    expect(parseTutorLine("undo")).toEqual({ op: "undo", steps: 1 });
+    expect(parseTutorLine("undo 3 steps")).toEqual({ op: "undo", steps: 3 });
+    expect(parseTutorLine("redo 2")).toEqual({ op: "redo", steps: 2 });
+    expect(parseTutorLine("Read the question again slowly.")).toEqual({ say: "Read the question again slowly." });
+    expect(parseTutorLine("Undo that if it looks wrong.")).toEqual({ say: "Undo that if it looks wrong." });
+  });
 });
