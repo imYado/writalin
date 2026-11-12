@@ -78,6 +78,22 @@ export async function listModels(t: Omit<ChatTarget, "model">): Promise<string[]
   return ids?.length ? ids : null;
 }
 
+/** The longest answer a request may ask for. */
+const MAX_TOKENS = 4000;
+
+/**
+ * From a "not enough credits" reply such as OpenRouter's "You requested up to
+ * 4000 tokens, but can only afford 1815": how many tokens to ask for instead.
+ * Null when the balance covers too little for a useful answer.
+ */
+export function affordableTokens(detail: string): number | null {
+  const n = Number(/can only afford (\d+)/i.exec(detail)?.[1]);
+  if (!Number.isFinite(n)) return null;
+  // A little under the limit, since the balance moves between requests.
+  const tokens = Math.min(MAX_TOKENS, Math.floor(n * 0.9));
+  return tokens >= 300 ? tokens : null;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -89,17 +105,27 @@ export interface ChatMessage {
  * piece is passed on as it comes.
  */
 export async function chat(t: ChatTarget, system: string, user: string | ChatMessage[], mode: "own" | "builtin", onDelta?: (text: string) => void, signal?: AbortSignal): Promise<{ text: string; model: string }> {
-  let res: Response;
-  try {
-    res = await fetch(`${t.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${t.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: t.model, max_tokens: 4000, stream: !!onDelta, messages: [{ role: "system", content: system }, ...(typeof user === "string" ? [{ role: "user", content: user }] : user)] }),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(110_000)]) : AbortSignal.timeout(110_000),
-      redirect: "error",
-    });
-  } catch {
-    throw new HttpError(502, `Couldn't reach ${t.label}. Try again in a moment.`);
+  const ask = async (maxTokens: number): Promise<Response> => {
+    try {
+      return await fetch(`${t.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${t.apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify({ model: t.model, max_tokens: maxTokens, stream: !!onDelta, messages: [{ role: "system", content: system }, ...(typeof user === "string" ? [{ role: "user", content: user }] : user)] }),
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(110_000)]) : AbortSignal.timeout(110_000),
+        redirect: "error",
+      });
+    } catch {
+      throw new HttpError(502, `Couldn't reach ${t.label}. Try again in a moment.`);
+    }
+  };
+  let res = await ask(MAX_TOKENS);
+  if (res.status === 402) {
+    // Low on credits: the service says how long an answer the balance still covers, so ask for that much.
+    const detail = (await res.text().catch(() => "")).slice(0, 2000);
+    const afford = affordableTokens(detail);
+    if (afford == null) throw new HttpError(402, `Your ${t.label} account is out of credits. Add credits there, or pick a free model in Settings.`, "ai_no_credits");
+    res = await ask(afford);
+    if (res.status === 402) throw new HttpError(402, `Your ${t.label} account is out of credits. Add credits there, or pick a free model in Settings.`, "ai_no_credits");
   }
   if (res.status === 401 || res.status === 403) {
     throw new HttpError(400, `${t.label} rejected your API key. Update it in Settings.`, mode === "own" ? "ai_bad_key" : undefined);
