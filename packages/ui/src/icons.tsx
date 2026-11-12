@@ -75,6 +75,10 @@ const paths = {
   arrowLeft: "M19 12H5M11 6l-6 6 6 6",
   tutor: "M2 9l10-5 10 5-10 5zM6 11v5c0 1.5 2.7 3 6 3s6-1.5 6-3v-5M22 9v6",
   send: "M4 12 20 4l-6 16-3-7z",
+  paneLeft: "M4 4h16v16H4zM10 4v16M6.5 8h1M6.5 11h1",
+  paneRight: "M4 4h16v16H4zM14 4v16M16.5 8h1M16.5 11h1",
+  volume: "M4 9v6h4l5 4V5L8 9zM16 9a4.5 4.5 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11",
+  volumeOff: "M4 9v6h4l5 4V5L8 9zM16.5 9.5l5 5M21.5 9.5l-5 5",
 } as const;
 
 export type IconName = keyof typeof paths;

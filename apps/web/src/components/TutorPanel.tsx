@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@writalin/ui";
-import type { Vault } from "@writalin/vault";
+import type { QuizQuestion, Vault } from "@writalin/vault";
 import type { Account } from "../api";
 import type { Tutor } from "../useTutor";
 import { CardText } from "./CardText";
@@ -18,20 +18,34 @@ interface Props {
   /** Open an empty PDF on the right to use as the board. */
   onNewBoard: () => void;
   onOpenSettings: () => void;
+  /** Play a quiz the tutor made. */
+  onPlayQuiz: (questions: QuizQuestion[]) => void;
 }
 
-const STARTERS = ["Teach me this page step by step", "Explain it with a drawing", "Give me a worked example", "Quiz me on this"];
+/** "3 flashcards and 1 task saved to your note", for what a reply did with the app's tools. */
+function savedLine(s: { cards: number; notes: number; tasks: number; timer?: boolean }): string {
+  const n = (count: number, one: string) => (count ? `${count} ${one}${count === 1 ? "" : "s"}` : "");
+  const parts = [n(s.cards, "flashcard"), n(s.notes, "note line"), n(s.tasks, "task")].filter(Boolean);
+  const saved = parts.length ? `${parts.join(", ")} saved to your note.` : "";
+  return [saved, s.timer ? "Focus timer started." : ""].filter(Boolean).join(" ");
+}
+
+const STARTERS = ["Teach me what's open, step by step", "Explain it with a drawing", "Make flashcards of the key points", "Quiz me"];
 
 /**
- * Tutor mode: you write to the tutor, it answers here in a line or two and
- * does the teaching on the PDF, writing and drawing while you watch.
+ * Tutor mode: you write to the tutor, it talks (aloud, with captions) and
+ * does the teaching on the PDF, writing and drawing while you watch. You can
+ * pause it, and write again without waiting for it to finish.
  */
-export function TutorPanel({ vault, account, tutor, boardName, boardBlank, reading, onNewBoard, onOpenSettings }: Props) {
+export function TutorPanel({ vault, account, tutor, boardName, boardBlank, reading, onNewBoard, onOpenSettings, onPlayQuiz }: Props) {
   const [enabled, setEnabled] = useState(vault.settings.aiEnabled);
   const [q, setQ] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const { log, busy } = tutor;
+  const { log, busy, paused } = tutor;
+  /** The student's own instructions for the tutor, edited here and kept with the vault. */
+  const [rules, setRules] = useState<string | null>(null);
+  const hasRules = !!vault.settings.tutorInstructions?.trim();
 
   // Keep the newest message in view.
   useEffect(() => {
@@ -71,7 +85,7 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
   }
 
   const send = (text = q) => {
-    if (!text.trim() || busy) return;
+    if (!text.trim()) return;
     setQ("");
     void tutor.send(text);
   };
@@ -82,11 +96,11 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
         {boardName ? (
           <>
             {boardBlank ? "Writes on" : "Marks up"} <b>{boardName}</b>
-            {reading ? <> · reads {reading}</> : null}
+            {reading ? <> · can use {reading}</> : null}
             {!boardBlank && <> · <button className="ai-link tutor-link" onClick={onNewBoard}>Use a blank PDF instead</button></>}
           </>
         ) : (
-          <>The tutor writes on a blank PDF that opens on the right when you ask your first question.</>
+          <>Ask about anything. The tutor writes on a blank PDF that opens on the right.</>
         )}
       </p>
       {log.length > 0 ? (
@@ -94,7 +108,14 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
           {log.map((m) => (
             <div key={m.id} className={`tutor-msg tutor-${m.from}${m.error ? " tutor-error" : ""}`}>
               {m.from === "you" ? m.text : m.text ? <CardText text={m.text} /> : null}
-              {m.working && <span className="tutor-working">{m.text ? "Working on the page…" : "Thinking…"}</span>}
+              {m.queued && <span className="tutor-queued">Waiting for the tutor to finish</span>}
+              {m.working && <span className="tutor-working">{paused ? "Paused" : m.text ? "Working on the page…" : "Thinking…"}</span>}
+              {m.saved && savedLine(m.saved) && <span className="tutor-working">{savedLine(m.saved)}</span>}
+              {m.quiz && !m.working && (
+                <button className="w-btn w-btn-small tutor-quiz" onClick={() => onPlayQuiz(m.quiz!)}>
+                  <Icon name="play" size={13} /> Play the quiz ({m.quiz.length})
+                </button>
+              )}
               {m.from === "tutor" && !m.working && !!m.drawn && (
                 <button className="ai-link tutor-undo" onClick={() => tutor.undo(m.id)}>Take it off the page</button>
               )}
@@ -115,7 +136,7 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
           className="w-input tutor-input"
           rows={1}
           value={q}
-          placeholder={log.length ? "Reply to your tutor…" : "What should we learn?"}
+          placeholder={busy ? "Write your next message…" : log.length ? "Reply to your tutor…" : "What should we learn? Any topic."}
           aria-label="Message to your tutor"
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
@@ -125,14 +146,44 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
             }
           }}
         />
-        {busy ? (
-          <button type="button" className="w-btn" onClick={tutor.stop}>Stop</button>
-        ) : (
-          <button type="submit" className="w-btn w-btn-primary" disabled={!q.trim()} aria-label="Send"><Icon name="send" size={16} /></button>
-        )}
+        <button type="submit" className="w-btn w-btn-primary" disabled={!q.trim()} aria-label={busy ? "Send after the tutor finishes" : "Send"} title={busy ? "Sent as soon as the tutor finishes" : "Send"}><Icon name="send" size={16} /></button>
       </form>
+      <div className="tutor-controls">
+        {busy && (
+          <>
+            <button className="w-btn w-btn-small" onClick={paused ? tutor.resume : tutor.pause} aria-pressed={paused}>
+              <Icon name={paused ? "play" : "pause"} size={13} /> {paused ? "Resume" : "Pause"}
+            </button>
+            <button className="w-btn w-btn-small" onClick={tutor.stop}><Icon name="close" size={13} /> Stop</button>
+          </>
+        )}
+        {tutor.canSpeak && (
+          <button className="w-btn w-btn-small w-btn-ghost tutor-voice" aria-pressed={tutor.voice} onClick={() => tutor.setVoice(!tutor.voice)} title={tutor.voice ? "The tutor talks aloud, with captions. Tap to mute." : "The tutor is muted. Tap to hear it."}>
+            <Icon name={tutor.voice ? "volume" : "volumeOff"} size={14} /> {tutor.voice ? "Voice on" : "Voice off"}
+          </button>
+        )}
+      </div>
+      {rules != null && (
+        <div className="tutor-rules">
+          <label className="w-small w-muted" htmlFor="tutor-rules">Your instructions for the tutor. It follows them in every lesson.</label>
+          <textarea
+            id="tutor-rules"
+            className="w-input"
+            rows={3}
+            maxLength={1000}
+            value={rules}
+            placeholder="e.g. I'm in grade 10. Explain in simple English, go slowly, and give one example from real life each time."
+            onChange={(e) => setRules(e.target.value)}
+          />
+          <div className="tutor-rules-actions">
+            <button className="w-btn w-btn-primary w-btn-small" onClick={() => { void vault.saveSettings({ tutorInstructions: rules.trim() }); setRules(null); }}>Save</button>
+            <button className="w-btn w-btn-ghost w-btn-small" onClick={() => setRules(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
       <div className="tutor-foot">
         {log.length > 0 && !busy && <button className="ai-link tutor-link" onClick={tutor.clear}>New lesson</button>}
+        {rules == null && <button className="ai-link tutor-link" onClick={() => setRules(vault.settings.tutorInstructions ?? "")}>{hasRules ? "Your instructions" : "Add your instructions"}</button>}
         <button className="ai-link" onClick={onOpenSettings}>AI settings</button>
       </div>
     </div>

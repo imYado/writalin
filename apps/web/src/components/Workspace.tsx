@@ -56,6 +56,8 @@ interface Layout {
   split?: number;
   /** A tab shown on the right instead of the note (e.g. the tutor's board), by id. */
   right?: string | null;
+  /** Show only the side pane: the right side (the note, or the tab there) is hidden. */
+  hideRight?: boolean;
 }
 const DEFAULT_SPLIT = 0.465;
 const clampSplit = (f: number) => Math.min(0.8, Math.max(0.2, f));
@@ -203,7 +205,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         if (opts.newPane) return openTab({ kind: "note", path });
         pane.current?.flush();
         // The note takes the right side back if something else (a board) was there.
-        setLayout((l) => ({ ...l, note: path, view: "note", right: null, tabs: l.right ? l.tabs.filter((t) => !(t.kind === "note" && t.path === path)) : l.tabs }));
+        setLayout((l) => ({ ...l, note: path, view: "note", right: null, hideRight: false, tabs: l.right ? l.tabs.filter((t) => !(t.kind === "note" && t.path === path)) : l.tabs }));
         if (opts.heading || opts.line != null) setJump({ heading: opts.heading, line: opts.line, nonce: Date.now() });
         return;
       }
@@ -535,7 +537,11 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   const leftTabs = rightTab ? layout.tabs.filter((t) => t.id !== rightTab.id) : layout.tabs;
   const activeTab = leftTabs.find((t) => t.id === layout.active) ?? leftTabs[leftTabs.length - 1];
   const showLeft = layout.leftOpen && leftTabs.length > 0 && layout.view === "note";
-  const noNote = !layout.note || layout.view !== "note" || !!rightTab;
+  /** Only the side pane shows; the right side is tucked away. */
+  const solo = !!layout.hideRight && showLeft;
+  const noNote = !layout.note || layout.view !== "note" || !!rightTab || solo;
+  /** The tutor's board is on the right (else it is the PDF in the side pane). */
+  const boardRight = !solo && rightTab?.kind === "pdf";
 
   // ----- the tutor and its board -----
   /** PDFs on screen that the tutor can write on, by tab. */
@@ -556,7 +562,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   };
   /** The PDF the tutor works on: the one on the right, else the one open in the side pane. */
   const currentBoard = (): PdfBoard | null =>
-    (rightTab?.kind === "pdf" && boards.current.get(rightTab.id)) || (showLeft && activeTab?.kind === "pdf" && boards.current.get(activeTab.id)) || null;
+    (!solo && rightTab?.kind === "pdf" && boards.current.get(rightTab.id)) || (showLeft && activeTab?.kind === "pdf" && boards.current.get(activeTab.id)) || null;
   /** Put a tab on the right, where the note usually is; the note stays at hand as a tab in the side pane. */
   const moveRight = (tabId: string) =>
     setLayout((l) => {
@@ -570,7 +576,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         if (!left.length) active = id;
       }
       active ??= tabs.filter((t) => t.id !== tabId).slice(-1)[0]?.id ?? null;
-      return { ...l, tabs, active, right: tabId, leftOpen: true, view: "note" };
+      return { ...l, tabs, active, right: tabId, leftOpen: true, hideRight: false, view: "note" };
     });
   /** Give the right side back to the note; the tab that was there goes to the side pane. */
   const moveLeft = () => {
@@ -601,6 +607,16 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
     }
     return null;
   };
+  /** Add a line the tutor made (a flashcard, a note line, a task) to the end of the note. */
+  const tutorWrite = async (markdown: string) => {
+    if (!layout.note) return;
+    // Through the editor when the note is open in it, so nothing races the autosave.
+    const view = rightTab ? null : pane.current?.editor?.view;
+    if (!view) return vault.append(layout.note, markdown);
+    const doc = view.state.doc;
+    const sep = !doc.length ? "" : doc.line(doc.lines).text.trim() ? "\n" : "";
+    view.dispatch({ changes: { from: doc.length, insert: sep + markdown }, userEvent: "input" });
+  };
   const tutor = useTutor({
     board: async () => currentBoard() ?? (await openBlankBoard()),
     material: async (board, question) => {
@@ -609,7 +625,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
         const src = await wsAi.build("page", question);
         if (src?.text.trim()) return { text: src.text, label: src.label };
       }
-      const open = pane.current?.editor?.view?.state.doc.toString();
+      const open = solo ? null : pane.current?.editor?.view?.state.doc.toString();
       if (open?.trim() && layout.note) return { text: open, label: `your note “${noteName(layout.note)}”` };
       if (showLeft && activeTab?.kind === "note" && activeTab.path) {
         const text = splitFrontmatter((await vault.read(activeTab.path).catch(() => null))?.text ?? "").body;
@@ -617,6 +633,15 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       }
       return null;
     },
+    tools: {
+      card: (question, answer) => tutorWrite(`${question} :: ${answer}`),
+      note: (markdown) => tutorWrite(markdown),
+      task: (text, due) => tutorWrite(`- [ ] ${text}${due ? ` 📅 ${due}` : ""}`),
+      timer: () => {
+        if (timer.state.phase === "idle") timer.dispatch({ type: "start" });
+      },
+    },
+    instructions: () => settings.tutorInstructions ?? "",
   });
   /** The AI panel helps with the note, or teaches at the board. */
   const [aiMode, setAiMode] = useState<"write" | "tutor">("write");
@@ -634,7 +659,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
       icon: "sparkle",
       // The tutor's chat stays open beside the board, on the side the board isn't.
       stay: aiMode === "tutor",
-      panelClass: aiMode === "tutor" ? `tutor-panel ${rightTab?.kind === "pdf" || !showLeft ? "tutor-panel-left" : "tutor-panel-right"}` : undefined,
+      panelClass: aiMode === "tutor" ? `tutor-panel ${boardRight || !showLeft ? "tutor-panel-left" : "tutor-panel-right"}` : undefined,
       panel: () => (
         <>
         <div className="ai-modes" role="tablist" aria-label="AI mode">
@@ -651,6 +676,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             reading={studyLabel}
             onNewBoard={() => void openBlankBoard()}
             onOpenSettings={() => { setDockOpen(null); setSettingsOpen("ai"); }}
+            onPlayQuiz={(questions) => setQuiz({ questions, title: "Quiz from your tutor" })}
           />
         ) : (
         <AiPanel
@@ -986,9 +1012,16 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
             {zone === "note" && (
               <>
                 {leftTabs.length ? (
-                  <button className="w-icon-btn" aria-pressed={showLeft} onClick={() => setLayout((l) => ({ ...l, leftOpen: !l.leftOpen }))} aria-label="Side pane" title="Side pane: PDFs, tasks, calendar">
-                    <Icon name="split" />
+                  <>
+                  <button className="w-icon-btn" aria-pressed={showLeft} onClick={() => setLayout((l) => ({ ...l, leftOpen: !l.leftOpen }))} aria-label="Side pane" title={showLeft ? "Hide the left side" : "Show the left side: PDFs, tasks, calendar"}>
+                    <Icon name="paneLeft" />
                   </button>
+                  {showLeft && (
+                    <button className="w-icon-btn" aria-pressed={!solo} onClick={() => { pane.current?.flush(); setLayout((l) => ({ ...l, hideRight: !l.hideRight })); }} aria-label="Right side" title={solo ? `Show the right side (${rightTab ? "the PDF there" : "your note"})` : "Hide the right side and show only the left"}>
+                      <Icon name="paneRight" />
+                    </button>
+                  )}
+                  </>
                 ) : (
                   <TabAdder {...adder} trigger="split" />
                 )}
@@ -1031,7 +1064,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
           {zone === "activity" && <ActivityWorkspace {...wsProps} />}
           {zone === "note" && layout.note && (
             <div
-              className={`split${showLeft ? " split-open" : ""}${dockOpen === "ai" && aiMode === "tutor" ? ` split-lesson${rightTab?.kind === "pdf" ? " split-board-first" : ""}` : ""}`}
+              className={`split${showLeft ? " split-open" : ""}${solo ? " split-solo" : ""}${dockOpen === "ai" && aiMode === "tutor" ? ` split-lesson${boardRight ? " split-board-first" : ""}` : ""}`}
               style={showLeft ? splitStyle(layout.split ?? DEFAULT_SPLIT) : undefined}
             >
               {showLeft && (
@@ -1062,6 +1095,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
                   <TabAdder {...adder} />
                   </div>
                   <div className="tab-body">{activeTab && renderTab(activeTab)}</div>
+                  {tutor.caption && !boardRight && <p className="tutor-caption" aria-hidden="true">{tutor.caption}</p>}
                 </section>
               )}
               {showLeft && <SplitHandle value={layout.split ?? DEFAULT_SPLIT} onChange={(split) => setLayout((l) => ({ ...l, split }))} />}
@@ -1084,6 +1118,7 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
                     </div>
                   </div>
                   <div className="tab-body">{renderTab(rightTab, "right")}</div>
+                  {tutor.caption && boardRight && <p className="tutor-caption" aria-hidden="true">{tutor.caption}</p>}
                 </section>
               ) : (
               <section className="right-pane" aria-label="Note">
