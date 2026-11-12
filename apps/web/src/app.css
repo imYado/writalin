@@ -496,3 +496,31 @@
 /* The AI panel while the answer is being written into the note. */
 .ai-panel.ai-writing { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
 .ai-writing-label { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--w-text-muted); }
+
+/* Tutor: voice, pause, queued messages, captions, own instructions. */
+.tutor-queued { display: block; margin-top: 2px; font-size: 11.5px; opacity: 0.8; }
+.tutor-quiz { margin-top: 6px; }
+.tutor-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tutor-controls:empty { display: none; }
+.tutor-voice { margin-left: auto; color: var(--w-text-muted); }
+.tutor-voice[aria-pressed="true"] { color: var(--w-accent); }
+.tutor-rules { display: flex; flex-direction: column; gap: 6px; }
+.tutor-rules textarea { resize: vertical; font-size: 14px; border-radius: 14px; }
+.tutor-rules-actions { display: flex; gap: 6px; }
+.tutor-foot { gap: 12px; }
+.tutor-foot .ai-link:last-child { margin-left: auto; }
+.left-pane, .right-tab { position: relative; }
+.tutor-caption {
+  position: absolute; left: 50%; bottom: 14px; z-index: 6; transform: translateX(-50%);
+  width: max-content; max-width: min(88%, 620px); margin: 0; padding: 8px 14px; border-radius: 12px;
+  background: rgba(20, 20, 24, 0.86); color: #fff; font-size: 15px; line-height: 1.4; text-align: center;
+  pointer-events: none; box-shadow: var(--w-shadow);
+}
+/* Only the side pane: the right side is hidden. */
+.split-open.split-solo { grid-template-columns: 1fr; padding-right: 12px; }
+.split-solo > .right-pane, .split-solo > .split-handle { display: none; }
+@media (max-width: 860px) {
+  .split-open.split-solo, .split-open.split-solo.split-lesson { grid-template-rows: 1fr; padding-right: 8px; }
+  .split-open.split-solo.split-lesson { padding-bottom: 44vh; }
+  .tutor-caption { font-size: 14px; bottom: 8px; }
+}

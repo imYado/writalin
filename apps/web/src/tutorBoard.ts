@@ -6,11 +6,20 @@ import type { BoardOp, BoardTextSize } from "@writalin/workspaces";
  * line into a step. Anything that isn't a command is taken as something said,
  * so a model that drifts into prose still makes sense.
  */
-export type TutorStep = { say: string } | BoardOp;
+export type TutorStep = { say: string } | BoardOp | TutorTool;
+
+/** The app's study tools the tutor can use besides the board. */
+export type TutorTool =
+  | { tool: "card"; question: string; answer: string }
+  | { tool: "note"; text: string }
+  | { tool: "task"; text: string; due?: string }
+  /** One multiple-choice question; the right answer is the first option. */
+  | { tool: "quiz"; question: string; options: string[] }
+  | { tool: "timer" };
 
 const SIZES = new Set(["s", "m", "l", "xl"]);
 const COLORS = new Set(["black", "red", "blue", "green", "purple", "orange", "yellow"]);
-const COMMAND = /^(say|write|text|line|arrow|rect|ellipse|circle|draw|highlight|cover|figure|end|page|erase)\b[ \t]*([^:]*?)[ \t]*(?::[ \t]?(.*))?$/i;
+const COMMAND = /^(say|write|text|line|arrow|rect|ellipse|circle|draw|highlight|cover|figure|end|page|erase|card|flashcard|note|task|quiz|timer)\b[ \t]*([^:]*?)[ \t]*(?::[ \t]?(.*))?$/i;
 
 export function parseTutorLine(raw: string): TutorStep | null {
   // Models like to dress lines up as list items or code; take that off.
@@ -59,6 +68,28 @@ export function parseTutorLine(raw: string): TutorStep | null {
     case "figure":
       if (stray || rest) return { say: line };
       return { op: "figure", height: nums[0] ?? 30 };
+    case "card":
+    case "flashcard": {
+      // "Question :: Answer"; a model may also write "Question | Answer".
+      const parts = rest.split(/\s*::\s*|\s+\|\s+/);
+      if (args || parts.length < 2 || !parts[0]!.trim() || !parts.slice(1).join(" ").trim()) return { say: line };
+      return { tool: "card", question: parts[0]!.trim(), answer: parts.slice(1).join(" ").trim() };
+    }
+    case "note":
+      return !args && rest ? { tool: "note", text: rest } : { say: line };
+    case "task": {
+      const due = /^\d{4}-\d{2}-\d{2}$/.test(args) ? args : undefined;
+      if (!rest || (args && !due)) return { say: line };
+      return { tool: "task", text: rest, due };
+    }
+    case "quiz": {
+      const parts = rest.split(/\s*\|\s*/).map((x) => x.trim()).filter(Boolean);
+      if (args || parts.length < 3) return { say: line };
+      return { tool: "quiz", question: parts[0]!, options: parts.slice(1, 7) };
+    }
+    case "timer":
+      // "timer", "timer start"; a sentence is not.
+      return rest || words.some((w) => !/^(start|on|focus)$/i.test(w)) ? { say: line } : { tool: "timer" };
     case "end":
     case "page":
     case "erase":
@@ -74,4 +105,27 @@ export function completeLines(soFar: string, done = false): string[] {
   const lines = soFar.split("\n");
   if (!done) lines.pop();
   return lines;
+}
+
+/** What the tutor says, as plain words a voice can read: no Markdown marks, maths without its symbols. */
+export function speakable(text: string): string {
+  return text
+    .replace(/\$\$?([^$]*)\$\$?/g, (_, m: string) => m.replace(/\\(?:frac|sqrt|times|cdot|rightarrow|to|left|right)\b/g, " ").replace(/[\\{}^_]/g, " "))
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[\[([^\]|]*\|)?([^\]]*)\]\]/g, "$2")
+    .replace(/[*_`~#>=]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** The language to read a sentence in, guessed from its letters; the browser's own language otherwise. */
+export function speechLang(text: string, fallback = "en"): string {
+  if (/[\u0600-\u06FF]/.test(text)) return "ar";
+  if (/[\u0400-\u04FF]/.test(text)) return "ru";
+  if (/[\u3040-\u30FF]/.test(text)) return "ja";
+  if (/[\u4E00-\u9FFF]/.test(text)) return "zh";
+  if (/[\uAC00-\uD7AF]/.test(text)) return "ko";
+  if (/[\u0900-\u097F]/.test(text)) return "hi";
+  // Latin letters: the browser's language when it is written in them, else English.
+  return /^(ar|ru|uk|bg|ja|zh|ko|hi|fa|he|el|th)\b/i.test(fallback) ? "en" : fallback;
 }

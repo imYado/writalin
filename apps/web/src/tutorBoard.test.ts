@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeLines, parseTutorLine } from "./tutorBoard";
+import { completeLines, parseTutorLine, speakable, speechLang } from "./tutorBoard";
 
 describe("parseTutorLine", () => {
   it("reads what the tutor says", () => {
@@ -43,5 +43,36 @@ describe("completeLines", () => {
   it("holds back the line still being written", () => {
     expect(completeLines("say: hi\nwrite: The mi")).toEqual(["say: hi"]);
     expect(completeLines("say: hi\nwrite: The mi", true)).toEqual(["say: hi", "write: The mi"]);
+  });
+});
+
+describe("the tutor's study tools", () => {
+  it("reads flashcards, notes and tasks", () => {
+    expect(parseTutorLine("card: What makes ATP? :: The mitochondria")).toEqual({ tool: "card", question: "What makes ATP?", answer: "The mitochondria" });
+    expect(parseTutorLine("flashcard: Capital of France? | Paris")).toEqual({ tool: "card", question: "Capital of France?", answer: "Paris" });
+    expect(parseTutorLine("note: **ATP** is the cell's energy currency.")).toEqual({ tool: "note", text: "**ATP** is the cell's energy currency." });
+    expect(parseTutorLine("task: Redo exercise 3")).toEqual({ tool: "task", text: "Redo exercise 3", due: undefined });
+    expect(parseTutorLine("task 2026-03-14: Revise chapter 2")).toEqual({ tool: "task", text: "Revise chapter 2", due: "2026-03-14" });
+    expect(parseTutorLine("timer")).toEqual({ tool: "timer" });
+  });
+  it("reads a quiz question with the right answer first", () => {
+    expect(parseTutorLine("quiz: 2 + 2? | 4 | 3 | 5")).toEqual({ tool: "quiz", question: "2 + 2?", options: ["4", "3", "5"] });
+  });
+  it("keeps sentences that only start with a tool word as speech", () => {
+    expect(parseTutorLine("Note that plants need light.")).toEqual({ say: "Note that plants need light." });
+    expect(parseTutorLine("card: no answer here")).toEqual({ say: "card: no answer here" });
+    expect(parseTutorLine("Timer is a good idea: try 25 minutes.")).toEqual({ say: "Timer is a good idea: try 25 minutes." });
+    expect(parseTutorLine("quiz: only a question")).toEqual({ say: "quiz: only a question" });
+  });
+});
+
+describe("speech", () => {
+  it("takes Markdown and maths marks out of what is read aloud", () => {
+    expect(speakable("**Plants** make `sugar` from $CO_2$ and [light](x).")).toBe("Plants make sugar from CO 2 and light.");
+  });
+  it("guesses the language from the letters", () => {
+    expect(speechLang("مرحبا بك", "en-US")).toBe("ar");
+    expect(speechLang("Bonjour", "fr-FR")).toBe("fr-FR");
+    expect(speechLang("Hello", "ar-IQ")).toBe("en");
   });
 });

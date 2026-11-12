@@ -15,6 +15,8 @@ export interface VaultSettings {
   newCardsPerDay: number;
   /** Most reviews of scheduled flashcards in a day. */
   reviewsPerDay: number;
+  /** The student's own standing instructions for the AI tutor (level, language, style). */
+  tutorInstructions: string;
 }
 
 export const DEFAULT_SETTINGS: VaultSettings = {
@@ -29,6 +31,7 @@ export const DEFAULT_SETTINGS: VaultSettings = {
   aiEnabled: false,
   newCardsPerDay: 20,
   reviewsPerDay: 200,
+  tutorInstructions: "",
 };
 
 export const SETTINGS_PATH = ".writalin/settings.json";
