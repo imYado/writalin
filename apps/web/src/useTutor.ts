@@ -20,6 +20,10 @@ export interface TutorMsg {
   using?: string;
   /** What this reply saved with the app's tools. */
   saved?: { cards: number; notes: number; tasks: number; timer?: boolean };
+  /** What the student was pointing at when they asked, e.g. "page 2: “3. Solve for x”". */
+  pointing?: string;
+  /** Said into the microphone rather than typed. */
+  spoken?: boolean;
   /** A quiz this reply made, ready to play. */
   quiz?: QuizQuestion[];
 }
@@ -36,6 +40,8 @@ export interface TutorHost {
     task: (text: string, due?: string) => Promise<void> | void;
     timer: () => void;
   };
+  /** What the student is pointing at on a page right now (cursor, finger or selection), if anything. */
+  pointing: () => Promise<{ label: string; text: string } | null>;
   /** The student's own standing instructions for the tutor. */
   instructions: () => string;
 }
@@ -76,6 +82,38 @@ const readVoicePref = () => {
   }
 };
 
+/** The browser's speech-to-text, where it has one (Chrome, Edge, Safari). */
+interface Recognizer {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string; confidence: number }> & { isFinal: boolean }> }) => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+const recognizer = (): (new () => Recognizer) | null => {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as { SpeechRecognition?: new () => Recognizer; webkitSpeechRecognition?: new () => Recognizer };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+};
+/**
+ * Below this the recogniser itself doubts the words. That is mostly speech
+ * from across the room or over other people, so it is left out. (0 means the
+ * browser gave no score.)
+ */
+const MIN_CONFIDENCE = 0.45;
+const MIC_ERRORS: Record<string, string> = {
+  "not-allowed": "Allow the microphone for this site, then tap the microphone again.",
+  "service-not-allowed": "Allow the microphone for this site, then tap the microphone again.",
+  "audio-capture": "No microphone was found.",
+  "no-speech": "I didn't hear anything. Tap the microphone and try again.",
+  network: "Listening needs an internet connection.",
+  "language-not-supported": "This browser can't listen in that language.",
+};
+
 /** The right answer comes first from the tutor; the student sees the options mixed. */
 function quizQuestion(question: string, options: string[]): QuizQuestion {
   const right = options[0]!;
@@ -109,7 +147,7 @@ export function useTutor(host: TutorHost) {
   const work = useRef(new Map<string, { board: PdfBoard; ids: string[] }>());
   const busyNow = useRef(false);
   /** Questions sent while the tutor was busy, in order. */
-  const queue = useRef<{ id: string; q: string }[]>([]);
+  const queue = useRef<{ id: string; q: string; pointing?: string }[]>([]);
   const pausedNow = useRef(false);
   const resumers = useRef<(() => void)[]>([]);
   const voiceNow = useRef(voice);
@@ -192,7 +230,7 @@ export function useTutor(host: TutorHost) {
       }
     });
 
-  const answer = async (q: string) => {
+  const answer = async (q: string, pointing?: string) => {
     const id = newId();
     setLog((l) => [...l, { id, from: "tutor", text: "", working: true }]);
     const stop = new AbortController();
@@ -259,7 +297,7 @@ export function useTutor(host: TutorHost) {
         fed = Math.max(fed, lines.length);
       };
       const material_ = (material?.text ?? "").slice(0, MAX_MATERIAL);
-      const r = await aiApi.run("tutor", material_, q, { board: about, printed: !board.blank, history: history.current.slice(-8), extra: hostNow.current.instructions().trim().slice(0, 1000) || undefined, signal: stop.signal }, (soFar) => {
+      const r = await aiApi.run("tutor", material_, q, { board: about, pointing, printed: !board.blank, history: history.current.slice(-8), extra: hostNow.current.instructions().trim().slice(0, 1000) || undefined, signal: stop.signal }, (soFar) => {
         raw = soFar;
         feed(completeLines(soFar));
       });
@@ -282,20 +320,32 @@ export function useTutor(host: TutorHost) {
   };
 
   /** Ask the tutor. While it is busy the question waits, and is read as soon as the tutor finishes. */
-  const send = useCallback(async (question: string) => {
+  const send = useCallback(async (question: string, how: { spoken?: boolean } = {}) => {
     const q = question.trim();
     if (!q) return;
     const mine = newId();
-    setLog((l) => [...l, { id: mine, from: "you", text: q, queued: busyNow.current || undefined }]);
-    if (busyNow.current) return void queue.current.push({ id: mine, q });
+    setLog((l) => [...l, { id: mine, from: "you", text: q, spoken: how.spoken, queued: busyNow.current || undefined }]);
+    // What they are pointing at is taken now, not when a waiting question is finally read.
+    const entry: { id: string; q: string; pointing?: string } = { id: mine, q };
+    const waiting = busyNow.current;
+    if (waiting) queue.current.push(entry);
+    const point = await hostNow.current.pointing().catch(() => null);
+    if (point) {
+      entry.pointing = point.text;
+      patch(mine, (m) => ({ ...m, pointing: point.label }));
+    }
+    if (waiting || busyNow.current) {
+      if (!waiting) queue.current.push(entry);
+      return;
+    }
     busyNow.current = true;
     setBusy(true);
     try {
-      let next: { id: string; q: string } | undefined = { id: mine, q };
+      let next: { id: string; q: string; pointing?: string } | undefined = entry;
       while (next) {
         const now = next;
         patch(now.id, (m) => ({ ...m, queued: undefined }));
-        await answer(now.q);
+        await answer(now.q, now.pointing);
         next = queue.current.shift();
       }
     } finally {
@@ -325,11 +375,73 @@ export function useTutor(host: TutorHost) {
     const waiting = new Set(queue.current.splice(0).map((x) => x.id));
     if (waiting.size) setLog((l) => l.filter((m) => !waiting.has(m.id)));
     stopRef.current?.abort();
+    rec.current?.abort();
     synth()?.cancel();
     setCaption(null);
     resume();
     for (const w of work.current.values()) w.board.hurry();
   }, [resume]);
+
+  // ----- listening: the student talks instead of typing -----
+  const [listening, setListening] = useState(false);
+  /** The words heard so far. */
+  const [heard, setHeard] = useState("");
+  const [micError, setMicError] = useState<string | null>(null);
+  const rec = useRef<Recognizer | null>(null);
+  /**
+   * Tap to talk; tap again (or just stop talking) and what was heard is sent.
+   * The tutor holds still and stays quiet meanwhile, so its own voice is not
+   * taken for the student's.
+   */
+  const listen = useCallback(() => {
+    if (rec.current) return rec.current.stop();
+    const Rec = recognizer();
+    if (!Rec) return;
+    const r = new Rec();
+    const picked = synth()?.getVoices().find((v) => v.name === voiceNameNow.current);
+    r.lang = (picked?.lang || navigator.language || "en-US").split("@")[0]!.replace("_", "-");
+    r.continuous = false;
+    r.interimResults = true;
+    const held = busyNow.current && !pausedNow.current;
+    let sure = "";
+    let maybe = "";
+    r.onresult = (e) => {
+      sure = "";
+      maybe = "";
+      for (let i = 0; i < e.results.length; i++) {
+        const res = e.results[i]!;
+        const best = res[0];
+        if (!best) continue;
+        if (!res.isFinal) maybe += best.transcript;
+        else if (!(best.confidence > 0 && best.confidence < MIN_CONFIDENCE)) sure += best.transcript;
+      }
+      setHeard(`${sure}${maybe}`.trim());
+    };
+    r.onerror = (e) => {
+      if (MIC_ERRORS[e.error]) setMicError(MIC_ERRORS[e.error]!);
+    };
+    r.onend = () => {
+      rec.current = null;
+      setListening(false);
+      setHeard("");
+      if (held) resume();
+      const said = `${sure}${maybe}`.trim();
+      if (said) void send(said, { spoken: true });
+    };
+    setMicError(null);
+    setHeard("");
+    if (held) pause();
+    else if (!busyNow.current) synth()?.cancel();
+    try {
+      r.start();
+      rec.current = r;
+      setListening(true);
+    } catch {
+      if (held) resume();
+      setMicError("The microphone could not be started.");
+    }
+  }, [pause, resume, send]);
+  useEffect(() => () => rec.current?.abort(), []);
 
   const setVoice = useCallback((on: boolean) => {
     setVoiceState(on);
@@ -364,7 +476,7 @@ export function useTutor(host: TutorHost) {
     setLog([]);
   }, [stop]);
 
-  return { log, busy, paused, voice, voices, voiceName, canSpeak: !!synth(), caption, send, stop, pause, resume, setVoice, setVoiceName, undo, clear };
+  return { log, busy, paused, voice, voices, voiceName, canSpeak: !!synth(), canListen: !!recognizer(), listening, heard, micError, listen, caption, send, stop, pause, resume, setVoice, setVoiceName, undo, clear };
 }
 
 export type Tutor = ReturnType<typeof useTutor>;

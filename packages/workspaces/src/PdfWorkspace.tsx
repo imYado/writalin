@@ -6,7 +6,7 @@ import { Icon, toast } from "@writalin/ui";
 import type { AiSourceText, BoardOp, BoardTextSize, PdfBoard, WorkspaceProps } from "./types";
 import { loadPdf, type PdfDoc } from "./pdf";
 import { blankPdf } from "./pdfBlank";
-import { MARK_COLORS, MarkLayer, MarkToolbar, PEN_SIZES, markBottom, markLength, newMarkId, primeMarkHtml, type MarkLayerProps, type MarkLive, type MarkTool } from "./pdfMarks";
+import { MARK_COLORS, MarkLayer, MarkToolbar, PEN_SIZES, markBottom, markLength, markRoute, pointAlong, newMarkId, primeMarkHtml, type MarkLayerProps, type MarkLive, type MarkTool } from "./pdfMarks";
 import { pickRelevant } from "./relevance";
 
 interface Props extends WorkspaceProps {
@@ -565,6 +565,62 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
     const at = el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop + y * (el.offsetWidth / 100);
     if (at < root.scrollTop + 30 || at > root.scrollTop + root.clientHeight * 0.72) root.scrollTo({ top: Math.max(0, at - root.clientHeight * 0.4), behavior: hurried.current ? "auto" : "smooth" });
   };
+  // ----- the tutor's hand: a pen where it writes, a cursor while it moves to the next spot -----
+  const hand = useRef<HTMLDivElement>(null);
+  const handAt = useRef<{ page: number; x: number; y: number } | null>(null);
+  const handIdle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  /** Show the hand at a spot on a page (in page units). */
+  const placeHand = (n: number, x: number, y: number, mode: "pen" | "move") => {
+    const el = hand.current;
+    const root = scroller.current;
+    const pg = pageEl(n);
+    if (!el || !root || !pg) return;
+    const pb = pg.getBoundingClientRect();
+    const rb = root.getBoundingClientRect();
+    const u = pb.width / 100;
+    el.style.transform = `translate(${pb.left - rb.left + root.scrollLeft + x * u}px, ${pb.top - rb.top + root.scrollTop + y * u}px)`;
+    el.dataset.mode = mode;
+    el.dataset.on = "1";
+    handAt.current = { page: n, x, y };
+    clearTimeout(handIdle.current);
+    handIdle.current = setTimeout(() => {
+      delete el.dataset.on;
+      handAt.current = null;
+    }, 1600);
+  };
+  /** Glide to where the next thing starts, as a cursor. */
+  const moveHand = async (n: number, x: number, y: number) => {
+    const el = hand.current;
+    if (!el || hurried.current) return;
+    const from = handAt.current;
+    if (!from) {
+      el.style.transition = "none";
+      placeHand(n, x, y, "move");
+      return wait(140);
+    }
+    const far = from.page === n ? Math.hypot(x - from.x, y - from.y) : 60;
+    if (far < 1.5) return;
+    const ms = clamp(far * 9, 160, 460);
+    el.style.transition = `transform ${ms}ms ease-in-out`;
+    placeHand(n, x, y, "move");
+    await wait(ms);
+    el.style.transition = "none";
+  };
+  useEffect(() => () => clearTimeout(handIdle.current), []);
+  /** Where typed text has reached, in page units: the end of what is shown so far. */
+  const caretOf = (m: PdfMark): [number, number] | null => {
+    const pg = pageEl(m.page);
+    const shown = pg?.parentElement?.querySelector<HTMLElement>(`.pdf-mark-text[data-mark-id="${m.id}"]`);
+    if (!pg || !shown) return null;
+    const pb = pg.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(shown);
+    const rects = range.getClientRects?.();
+    const last = rects && rects.length ? rects[rects.length - 1]! : shown.getBoundingClientRect();
+    const u = pb.width / 100;
+    if (!u) return null;
+    return [((rects && rects.length ? last.right : last.left) - pb.left) / u, (last.bottom - pb.top) / u];
+  };
   /** Put a mark on the page the way a hand would: lines drawn along their length, text typed out. */
   const drawLive = async (m: PdfMark) => {
     const setFor = (v: MarkLive | null) =>
@@ -576,6 +632,8 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       });
     if (m.kind === "text") {
       await primeMarkHtml(m.text, renderText);
+      follow(m.page, m.y);
+      await moveHand(m.page, m.x, m.y + m.size * 1.1);
       setFor({ typed: 0 });
       commitMarks([...marksNow.current, m], { undo: false });
       follow(m.page, m.y);
@@ -586,6 +644,8 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         await new Promise((r) => requestAnimationFrame(r));
         const typed = Math.floor(((performance.now() - start) / ms) * total);
         if (typed >= total) break;
+        const caret = caretOf(m);
+        if (caret) placeHand(m.page, caret[0], caret[1], "pen");
         setFor({ typed });
       }
       setFor(null);
@@ -594,12 +654,39 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       return;
     }
     const ms = m.kind === "box" ? 260 : clamp(markLength(m) * 14, 260, 1000);
+    const route = markRoute(m);
+    follow(m.page, markBottom(m));
+    await moveHand(m.page, route[0]![0], route[0]![1]);
     setFor({ draw: ms });
     commitMarks([...marksNow.current, m], { undo: false });
-    follow(m.page, markBottom(m));
-    await wait(ms);
+    const start = performance.now();
+    while (!hurried.current) {
+      const f = (performance.now() - start) / ms;
+      if (f >= 1) break;
+      const [x, y] = pointAlong(route, f);
+      placeHand(m.page, x, y, "pen");
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const end = route[route.length - 1]!;
+    if (!hurried.current) placeHand(m.page, end[0], end[1], "pen");
     setFor(null);
   };
+  /** Where the student's own cursor or finger last was on a page, in page units. */
+  const pointAt = useRef<{ page: number; x: number; y: number; t: number } | null>(null);
+  const pointRest = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  /** A spot counts once the cursor rests on it (or it is tapped), not while it sweeps across the page on its way elsewhere. */
+  const trackPointer = (e: React.PointerEvent) => {
+    clearTimeout(pointRest.current);
+    const pg = (e.target as Element).closest?.<HTMLElement>("[data-page]");
+    if (!pg) return;
+    const box = pg.getBoundingClientRect();
+    if (!box.width) return;
+    const u = box.width / 100;
+    const spot = { page: Number(pg.dataset.page), x: (e.clientX - box.left) / u, y: (e.clientY - box.top) / u, t: Date.now() };
+    if (e.type === "pointerdown") pointAt.current = spot;
+    else pointRest.current = setTimeout(() => (pointAt.current = { ...spot, t: Date.now() }), 280);
+  };
+  useEffect(() => () => clearTimeout(pointRest.current), []);
   const board: PdfBoard = {
     path,
     name: basename(path),
@@ -754,6 +841,43 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       }
       return added;
     },
+    async pointed() {
+      const d = docNow.current;
+      if (!d) return null;
+      const name = basename(path);
+      const short = (t: string, n: number) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
+      const picked = sel?.text.replace(/\s+/g, " ").trim();
+      if (sel && picked) return { at: Date.now(), label: `page ${sel.page}: “${short(picked, 60)}”`, text: `The student selected these words on page ${sel.page} of “${name}”:\n${picked.slice(0, 1200)}` };
+      const pt = pointAt.current;
+      if (!pt) return null;
+      const out = [`The student's cursor is on page ${pt.page} of “${name}”, at x=${r1(pt.x)} y=${r1(pt.y)} (the page is 100 wide).`];
+      let label = "";
+      const lines = d.blank ? [] : await d.pageLines(pt.page).catch(() => []);
+      // How far a line's box is from the cursor (0 when the cursor is on it).
+      const off = (l: { x: number; y: number; w: number; h: number }) =>
+        Math.max(0, l.y - pt.y, pt.y - (l.y + l.h)) + Math.max(0, l.x - pt.x, pt.x - (l.x + l.w)) * 0.3;
+      let at = -1;
+      lines.forEach((l, i) => {
+        if (l.text.trim() && (at < 0 || off(l) < off(lines[at]!))) at = i;
+      });
+      const row = (l: { x: number; y: number; w: number; h: number; text: string }) => `[x=${r1(l.x)} y=${r1(l.y)} w=${r1(l.w)} h=${r1(l.h)}] ${l.text}`;
+      if (at >= 0 && off(lines[at]!) < 10) {
+        out.push(`The printed line under it:\n${row(lines[at]!)}`);
+        out.push("That line with the lines around it, in reading order:");
+        for (const l of lines.slice(Math.max(0, at - 2), at + 7)) out.push(short(row(l), 220));
+        label = lines[at]!.text.trim();
+      } else if (!d.blank) out.push("No printed words are under it (a picture, a margin or a gap).");
+      const near = marksNow.current
+        .filter((m): m is Extract<PdfMark, { kind: "text" }> => m.kind === "text" && m.page === pt.page && Math.abs(m.y - pt.y) < 9)
+        .sort((a, b) => Math.abs(a.y - pt.y) - Math.abs(b.y - pt.y))
+        .slice(0, 4);
+      if (near.length) {
+        out.push("Written on the page next to it:");
+        for (const m of near) out.push(`text at x=${r1(m.x)} y=${r1(m.y)}: ${short(m.text.replace(/\s+/g, " "), 160)}`);
+        label ||= near[0]!.text.replace(/\s+/g, " ");
+      }
+      return { at: pt.t, label: label ? `page ${pt.page}: “${short(label, 60)}”` : `a spot on page ${pt.page}`, text: out.join("\n").slice(0, 1900) };
+    },
     remove(ids) {
       const gone = new Set(ids);
       if (marksNow.current.some((m) => gone.has(m.id))) commitMarks(marksNow.current.filter((m) => !gone.has(m.id)), { undo: false });
@@ -782,6 +906,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       begin: () => boardNow.current.begin(),
       describe: () => boardNow.current.describe(),
       apply: (op) => boardNow.current.apply(op),
+      pointed: () => boardNow.current.pointed(),
       remove: (ids) => boardNow.current.remove(ids),
       hurry: () => boardNow.current.hurry(),
     });
@@ -901,12 +1026,16 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
             ))}
           </nav>
         )}
-        <div className="ws-scroll pdf-pages" ref={scroller} onMouseUp={onMouseUp} onClick={onPagesClick} onScroll={() => { trackPage(); if (sel) setSel(null); if (activeHl) setActiveHl(null); }}>
+        <div className="ws-scroll pdf-pages" ref={scroller} onMouseUp={onMouseUp} onClick={onPagesClick} onPointerMove={trackPointer} onPointerDown={trackPointer} onPointerLeave={() => clearTimeout(pointRest.current)} onScroll={() => { trackPage(); if (sel) setSel(null); if (activeHl) setActiveHl(null); }}>
           {error && <p className="ws-empty">{error}</p>}
           {!doc && !error && <p className="ws-empty w-muted">Opening PDF…</p>}
           {doc && Array.from({ length: doc.numPages }, (_, i) => (
             <PdfPage key={i} doc={doc} n={i + 1} scale={scale} cssZoom={zoom} textLayer highlights={highlights} marks={marks} markLayer={markLayer} pick={picked ? { checked: picked.has(i + 1), onToggle: () => togglePick(i + 1) } : undefined} />
           ))}
+          <div className="pdf-hand" ref={hand} aria-hidden>
+            <svg className="pdf-hand-pen" viewBox="0 0 24 24" width="26" height="26"><path d="M3 21l1.2-4.6L16.6 4a2 2 0 0 1 2.8 0l.6.6a2 2 0 0 1 0 2.8L7.6 19.8z" /><path d="M14.5 6.1l3.4 3.4" /></svg>
+            <svg className="pdf-hand-cursor" viewBox="0 0 24 24" width="22" height="22"><path d="M4 3l15 8-6.5 1.8L10 19.5z" /></svg>
+          </div>
           {doc?.blank && (
             <button className="w-btn w-btn-small pdf-add-page" onClick={() => void addPage().then((n) => n && requestAnimationFrame(() => goTo(n)))}>
               <Icon name="plus" size={14} /> Add a page

@@ -77,6 +77,7 @@ const paths = {
   send: "M4 12 20 4l-6 16-3-7z",
   paneLeft: "M4 4h16v16H4zM10 4v16M6.5 8h1M6.5 11h1",
   paneRight: "M4 4h16v16H4zM14 4v16M16.5 8h1M16.5 11h1",
+  mic: "M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7",
   volume: "M4 9v6h4l5 4V5L8 9zM16 9a4.5 4.5 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11",
   volumeOff: "M4 9v6h4l5 4V5L8 9zM16.5 9.5l5 5M21.5 9.5l-5 5",
 } as const;

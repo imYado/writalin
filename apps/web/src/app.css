@@ -526,3 +526,11 @@
 }
 .tutor-voice-pick { display: flex; align-items: center; gap: 8px; }
 .tutor-voice-pick select { flex: 1; min-width: 0; padding: 6px 28px 6px 12px; font-size: 13px; border-radius: 999px; }
+
+/* Talking to the tutor, and what was being pointed at. */
+.tutor-mic { flex: none; padding-inline: 10px; }
+.tutor-mic-on { background: var(--w-danger, #d64545); border-color: transparent; color: #fff; animation: tutor-mic-pulse 1.2s ease-in-out infinite; }
+@keyframes tutor-mic-pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--w-danger, #d64545) 25%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .tutor-mic-on { animation: none; } }
+.tutor-mic-error { margin: 0; color: var(--w-danger, #d64545); }
+.tutor-pointing { display: block; margin-top: 4px; font-size: 12px; opacity: 0.75; }

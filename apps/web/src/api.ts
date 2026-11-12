@@ -51,6 +51,8 @@ export interface AiRunOptions {
   selection?: string;
   /** The tutor: what is on the board now, whether it is a printed page, and the conversation so far. */
   board?: string;
+  /** What the student is pointing at on the page. */
+  pointing?: string;
   printed?: boolean;
   history?: { role: "user" | "assistant"; content: string }[];
   /** Stops the answer part-way (the Stop button). */

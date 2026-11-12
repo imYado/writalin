@@ -619,6 +619,12 @@ export function Workspace({ vault, record, records, account, quality, onSwitchVa
   };
   const tutor = useTutor({
     board: async () => currentBoard() ?? (await openBlankBoard()),
+    pointing: async () => {
+      // The page they pointed at most recently, if that was a moment ago rather than earlier in the day.
+      const all = await Promise.all([...boards.current.values()].map((b) => b.pointed().catch(() => null)));
+      const latest = all.filter((p): p is NonNullable<typeof p> => !!p).sort((a, b) => b.at - a.at)[0];
+      return latest && Date.now() - latest.at < 5 * 60_000 ? latest : null;
+    },
     material: async (board, question) => {
       // The PDF being studied in the side pane, when it isn't the board itself.
       if (showLeft && wsAi && activeTab?.kind === "pdf" && activeTab.path !== board.path) {
