@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { pickVoice } from "./useTutor";
 import { completeLines, parseTutorLine, speakable, speechLang } from "./tutorBoard";
 
 describe("parseTutorLine", () => {
@@ -74,5 +75,18 @@ describe("speech", () => {
     expect(speechLang("مرحبا بك", "en-US")).toBe("ar");
     expect(speechLang("Bonjour", "fr-FR")).toBe("fr-FR");
     expect(speechLang("Hello", "ar-IQ")).toBe("en");
+  });
+});
+
+describe("the tutor's voice", () => {
+  const voices = [{ name: "Daniel", lang: "en-GB" }, { name: "Samantha", lang: "en-US" }, { name: "Majed", lang: "ar-SA" }, { name: "Laila", lang: "ar_EG" }];
+  it("uses the picked voice when it speaks the language", () => {
+    expect(pickVoice(voices, "en-US", "Daniel")?.name).toBe("Daniel");
+    expect(pickVoice(voices, "ar", "Daniel")?.name).toBe("Laila");
+  });
+  it("offers a woman's voice first when nothing was picked", () => {
+    expect(pickVoice(voices, "en-GB", "")?.name).toBe("Samantha");
+    expect(pickVoice([{ name: "Daniel", lang: "en-GB" }], "en-US", "")?.name).toBe("Daniel");
+    expect(pickVoice(voices, "fr-FR", "")).toBeUndefined();
   });
 });

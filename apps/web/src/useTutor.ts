@@ -44,6 +44,28 @@ const newId = () => Math.random().toString(36).slice(2, 10);
 /** Matches the server's limit on how much text one request may send, with room for the board. */
 const MAX_MATERIAL = 40_000;
 const VOICE_KEY = "writalin.tutor.voice";
+const VOICE_NAME_KEY = "writalin.tutor.voiceName";
+const readVoiceName = () => {
+  try {
+    return localStorage.getItem(VOICE_NAME_KEY) ?? "";
+  } catch {
+    return "";
+  }
+};
+
+/** Names that device voices commonly use for a woman's voice, to offer one first when nothing was picked. */
+const WOMAN = /female|woman|samantha|victoria|karen|moira|tessa|fiona|allison|ava|susan|zira|hazel|aria|jenny|sonia|libby|michelle|emma|joanna|salli|kendra|kimberly|amy|google us english|google uk english female|laila|salma|hoda|zariyah|amira/i;
+
+/**
+ * The voice to read a sentence with: the one the student picked when it speaks
+ * the sentence's language, else a woman's voice in that language when the
+ * device has one, else any voice in that language.
+ */
+export function pickVoice<V extends { name: string; lang: string }>(voices: V[], lang: string, picked: string): V | undefined {
+  const base = lang.slice(0, 2).toLowerCase();
+  const fits = voices.filter((v) => v.lang.toLowerCase().replace("_", "-").startsWith(base));
+  return fits.find((v) => v.name === picked) ?? fits.find((v) => WOMAN.test(v.name)) ?? fits.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ?? fits[0];
+}
 
 const synth = (): SpeechSynthesis | null => (typeof window !== "undefined" && "speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined" ? window.speechSynthesis : null);
 const readVoicePref = () => {
@@ -92,6 +114,40 @@ export function useTutor(host: TutorHost) {
   const resumers = useRef<(() => void)[]>([]);
   const voiceNow = useRef(voice);
   voiceNow.current = voice;
+  /** The device's voices (they load a moment after the page), and the one the student picked. */
+  const [voices, setVoices] = useState<{ name: string; lang: string }[]>([]);
+  const [voiceName, setVoiceNameState] = useState(readVoiceName);
+  const voiceNameNow = useRef(voiceName);
+  voiceNameNow.current = voiceName;
+  useEffect(() => {
+    const s = synth();
+    if (!s) return;
+    const load = () => setVoices(s.getVoices().map((v) => ({ name: v.name, lang: v.lang })));
+    load();
+    s.addEventListener?.("voiceschanged", load);
+    return () => s.removeEventListener?.("voiceschanged", load);
+  }, []);
+  /** Pick a voice by name ("" lets the app choose) and say a few words in it. */
+  const setVoiceName = useCallback((name: string) => {
+    setVoiceNameState(name);
+    voiceNameNow.current = name;
+    try {
+      if (name) localStorage.setItem(VOICE_NAME_KEY, name);
+      else localStorage.removeItem(VOICE_NAME_KEY);
+    } catch {
+      /* private mode: just not remembered */
+    }
+    const s = synth();
+    if (!s || busyNow.current) return;
+    const v = s.getVoices().find((x) => x.name === name);
+    const u = new SpeechSynthesisUtterance(v?.lang.toLowerCase().startsWith("ar") ? "مرحبا، أنا معلمتك." : "Hi, I'm your tutor.");
+    if (v) {
+      u.voice = v;
+      u.lang = v.lang;
+    }
+    s.cancel();
+    s.speak(u);
+  }, []);
 
   const patch = (id: string, change: (m: TutorMsg) => TutorMsg) => setLog((l) => l.map((m) => (m.id === id ? change(m) : m)));
 
@@ -106,9 +162,7 @@ export function useTutor(host: TutorHost) {
       if (!s || !voiceNow.current || !words || stop.aborted) return resolve();
       const u = new SpeechSynthesisUtterance(words);
       u.lang = speechLang(words, (navigator.language || "en").split("@")[0]!);
-      const base = u.lang.slice(0, 2).toLowerCase();
-      const voices = s.getVoices();
-      const v = voices.find((x) => x.lang.toLowerCase() === u.lang.toLowerCase()) ?? voices.find((x) => x.lang.toLowerCase().startsWith(base));
+      const v = pickVoice(s.getVoices(), u.lang, voiceNameNow.current);
       if (v) u.voice = v;
       let done = false;
       let spoken = 0;
@@ -310,7 +364,7 @@ export function useTutor(host: TutorHost) {
     setLog([]);
   }, [stop]);
 
-  return { log, busy, paused, voice, canSpeak: !!synth(), caption, send, stop, pause, resume, setVoice, undo, clear };
+  return { log, busy, paused, voice, voices, voiceName, canSpeak: !!synth(), caption, send, stop, pause, resume, setVoice, setVoiceName, undo, clear };
 }
 
 export type Tutor = ReturnType<typeof useTutor>;

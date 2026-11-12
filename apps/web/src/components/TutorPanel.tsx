@@ -163,6 +163,17 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
           </button>
         )}
       </div>
+      {tutor.canSpeak && tutor.voice && tutor.voices.length > 1 && (
+        <label className="tutor-voice-pick w-small w-muted">
+          Voice
+          <select className="w-input" value={tutor.voiceName} onChange={(e) => tutor.setVoiceName(e.target.value)} aria-label="The tutor's voice">
+            <option value="">Chosen for you</option>
+            {tutor.voices.map((v) => (
+              <option key={`${v.name}|${v.lang}`} value={v.name}>{v.name} ({v.lang})</option>
+            ))}
+          </select>
+        </label>
+      )}
       {rules != null && (
         <div className="tutor-rules">
           <label className="w-small w-muted" htmlFor="tutor-rules">Your instructions for the tutor. It follows them in every lesson.</label>
