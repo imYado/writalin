@@ -36,6 +36,19 @@ describe("AI providers", () => {
     await expect(chat(target, "s", "u", "own")).rejects.toThrow(/doesn't know the model/);
   });
 
+  it("asks for a shorter answer when the credits don't cover a long one", async () => {
+    const low = () => new Response(JSON.stringify({ error: { message: "This request requires more credits, or fewer max_tokens. You requested up to 4000 tokens, but can only afford 1815." } }), { status: 402 });
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => (JSON.parse(init.body as string).max_tokens > 1815 ? low() : Response.json({ choices: [{ message: { content: "Short answer" } }] })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(chat(target, "s", "u", "own")).resolves.toMatchObject({ text: "Short answer" });
+    expect(fetchMock.mock.calls.map((c) => JSON.parse(c[1].body as string).max_tokens)).toEqual([4000, 1633]);
+    // Nothing left: say so plainly instead of "having trouble".
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { message: "can only afford 12" } }), { status: 402 })));
+    await expect(chat(target, "s", "u", "own")).rejects.toThrow(/out of credits/);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Payment required", { status: 402 })));
+    await expect(chat(target, "s", "u", "own")).rejects.toThrow(/out of credits/);
+  });
+
   it("lists models, without the Gemini models/ prefix", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [{ id: "models/gemini-2.5-flash" }, { id: "x" }] })));
     await expect(listModels(target)).resolves.toEqual(["gemini-2.5-flash", "x"]);
