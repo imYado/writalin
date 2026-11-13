@@ -33,6 +33,17 @@ function savedLine(s: { cards: number; notes: number; tasks: number; timer?: boo
   return [saved, s.timer ? "Focus timer started." : ""].filter(Boolean).join(" ");
 }
 
+const MIC_KEY = "writalin.tutor.micKey";
+const readMicKey = () => {
+  try {
+    return localStorage.getItem(MIC_KEY) || "F3";
+  } catch {
+    return "F3";
+  }
+};
+/** How a key is shown: "F3", "Space", "M". */
+const keyName = (k: string) => (k === " " ? "Space" : k.length === 1 ? k.toUpperCase() : k);
+
 const STARTERS = ["Teach me what's open, step by step", "Explain it with a drawing", "Make flashcards of the key points", "Quiz me"];
 
 /**
@@ -49,6 +60,8 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
   /** The student's own instructions for the tutor, edited here and kept with the vault. */
   const [rules, setRules] = useState<string | null>(null);
   const hasRules = !!vault.settings.tutorInstructions?.trim();
+  const [micKey, setMicKey] = useState(readMicKey);
+  const [setting, setSetting] = useState(false);
 
   // Keep the newest message in view.
   useEffect(() => {
@@ -58,6 +71,38 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
   useEffect(() => {
     if (!busy) input.current?.focus({ preventScroll: true });
   }, [busy]);
+
+  // A key on the keyboard works as the microphone button: press to talk, press again to send.
+  const listenNow = useRef(tutor.listen);
+  listenNow.current = tutor.listen;
+  const usable = account != null && enabled && tutor.canListen;
+  useEffect(() => {
+    if (!usable) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (setting) {
+        // Choosing the key: the next key pressed becomes it (Escape leaves it as it was).
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.key !== "Escape" && !["Shift", "Control", "Alt", "Meta", "Tab", "Enter"].includes(e.key)) {
+          setMicKey(e.key);
+          try {
+            localStorage.setItem(MIC_KEY, e.key);
+          } catch {
+            /* private mode: just not remembered */
+          }
+        }
+        return setSetting(false);
+      }
+      if (e.key !== micKey || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      // A letter or digit chosen as the key still types normally in a text box.
+      const el = e.target as HTMLElement | null;
+      if (micKey.length === 1 && el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      e.preventDefault();
+      listenNow.current();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [usable, micKey, setting]);
 
   if (account === undefined) return <p className="w-muted">Checking your account…</p>;
   if (account === null) {
@@ -112,7 +157,7 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
             <div key={m.id} className={`tutor-msg tutor-${m.from}${m.error ? " tutor-error" : ""}`}>
               {m.from === "you" ? m.text : m.text ? <CardText text={m.text} /> : null}
               {m.pointing && <span className="tutor-pointing">Pointing at {m.pointing}</span>}
-              {m.queued && <span className="tutor-queued">The tutor will stop for this at the end of its point</span>}
+              {m.queued && <span className="tutor-queued">The tutor is stopping for this</span>}
               {m.working && <span className="tutor-working">{paused ? "Paused" : m.text ? "Working on the page…" : "Thinking…"}</span>}
               {m.saved && savedLine(m.saved) && <span className="tutor-working">{savedLine(m.saved)}</span>}
               {m.quiz && !m.working && (
@@ -158,13 +203,13 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
             className={`w-btn tutor-mic${tutor.listening ? " tutor-mic-on" : ""}`}
             aria-pressed={tutor.listening}
             aria-label={tutor.listening ? "Stop listening and send" : "Talk to your tutor"}
-            title={tutor.listening ? "Listening. Tap to send what you said." : "Talk instead of typing. Point at something on the page first and say “I don't understand this”."}
+            title={tutor.listening ? `Listening. Tap (or press ${keyName(micKey)}) to send what you said.` : `Talk instead of typing (or press ${keyName(micKey)}). Point at something on the page first and say “I don't understand this”.`}
             onClick={tutor.listen}
           >
             <Icon name="mic" size={16} />
           </button>
         )}
-        <button type="submit" className="w-btn w-btn-primary" disabled={tutor.listening || !q.trim()} aria-label={busy ? "Send; the tutor stops for it at the end of its point" : "Send"} title={busy ? "The tutor stops for it at the end of its point" : "Send"}><Icon name="send" size={16} /></button>
+        <button type="submit" className="w-btn w-btn-primary" disabled={tutor.listening || !q.trim()} aria-label={busy ? "Send and stop the tutor" : "Send"} title={busy ? "Sending stops the tutor so it can answer this" : "Send"}><Icon name="send" size={16} /></button>
       </form>
       {tutor.micError && <p className="tutor-mic-error w-small" role="alert">{tutor.micError}</p>}
       <div className="tutor-controls">
@@ -220,6 +265,7 @@ export function TutorPanel({ vault, account, tutor, boardName, boardBlank, readi
       <div className="tutor-foot">
         {log.length > 0 && !busy && <button className="ai-link tutor-link" onClick={tutor.clear}>New lesson</button>}
         {rules == null && <button className="ai-link tutor-link" onClick={() => setRules(vault.settings.tutorInstructions ?? "")}>{hasRules ? "Your instructions" : "Add your instructions"}</button>}
+        {tutor.canListen && <button className="ai-link tutor-link" onClick={() => setSetting(!setting)} title="The key that works as the microphone button. Click, then press the key you want.">{setting ? "Press a key…" : `Mic key: ${keyName(micKey)}`}</button>}
         <button className="ai-link" onClick={onOpenSettings}>AI settings</button>
       </div>
     </div>
