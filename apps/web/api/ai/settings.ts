@@ -3,7 +3,7 @@ import { requireUser } from "../_lib/auth.js";
 import { db } from "../_lib/db.js";
 import { encryptSecret, keyHint } from "../_lib/secrets.js";
 import { aiAccount, builtinAvailable, dailyLimit, usedToday, verifyKey, type AiMode } from "../_lib/ai.js";
-import { checkCustomBaseUrl, checkKeyShape, isProvider, PROVIDERS, providerList } from "../_lib/providers.js";
+import { checkCustomBaseUrl, checkKeyShape, freeModels, isProvider, PROVIDERS, providerList, RECOMMENDED_FREE } from "../_lib/providers.js";
 
 async function state(userId: string) {
   const acct = await aiAccount(userId);
@@ -19,6 +19,11 @@ async function state(userId: string) {
 /** What the Settings screen shows. Never includes the key itself. */
 export const GET = handler(async (req) => {
   const user = await requireUser(req);
+  // ?free=1: the free models to offer in the picker (same endpoint, to stay within the functions a plan allows).
+  if (new URL(req.url, "http://x").searchParams.get("free")) {
+    const models = await freeModels();
+    return json({ models, recommended: models.some((m) => m.id === RECOMMENDED_FREE) ? RECOMMENDED_FREE : models[0]?.id ?? null });
+  }
   return json(await state(user.id));
 });
 

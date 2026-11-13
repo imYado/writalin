@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PdfBoard } from "@writalin/workspaces";
 import type { QuizQuestion } from "@writalin/vault";
 import { aiApi, ApiError } from "./api";
-import { completeLines, parseTutorLine, speakable, speechLang } from "./tutorBoard";
+import { completeLines, parseTutorLine, speakable, speechLang, type TutorStep } from "./tutorBoard";
 
 export interface TutorMsg {
   id: string;
@@ -204,7 +204,7 @@ export function useTutor(host: TutorHost) {
   const unpaused = () => (pausedNow.current ? new Promise<void>((r) => resumers.current.push(r)) : Promise.resolve());
 
   /** Read one sentence aloud with its caption. Resolves when it has been said (at once when the voice is off). */
-  const speak = (text: string, stop: AbortSignal) =>
+  const speak = (text: string, stop: AbortSignal, onWord?: (frac: number) => void) =>
     new Promise<void>((resolve) => {
       const s = synth();
       const words = speakable(text);
@@ -232,6 +232,8 @@ export function useTutor(host: TutorHost) {
       }, 250);
       u.onend = finish;
       u.onerror = finish;
+      // Where the voice has got to, when the voice says (not every voice does).
+      if (onWord) u.onboundary = (e) => onWord(Math.min(1, (e.charIndex + (e.charLength || 0)) / words.length));
       stop.addEventListener("abort", finish);
       setCaption(text);
       try {
@@ -240,6 +242,44 @@ export function useTutor(host: TutorHost) {
         finish();
       }
     });
+
+  /**
+   * Read a line of the page aloud while the cursor goes along it, keeping the
+   * two together: by the voice's own word marks when it gives them, else by
+   * how long the words take to say.
+   */
+  const readAloud = async (target: PdfBoard, step: Extract<TutorStep, { op: "read" }>, stop: AbortSignal) => {
+    const text = await target.lineText(step).catch(() => "");
+    const pace = { frac: 0, done: false };
+    const speaking = !!synth() && voiceNow.current && !!speakable(text);
+    // About how long the line takes: said aloud, or just looked along.
+    const total = Math.min(15000, Math.max(700, speakable(text).length * (speaking ? 68 : 30)));
+    let marked = false;
+    let spent = 0;
+    const tick = setInterval(() => {
+      if (pausedNow.current) return;
+      spent += 50;
+      // No word marks from this voice: go by the clock.
+      if (!marked) pace.frac = Math.min(0.97, spent / total);
+    }, 50);
+    const moving = target.apply({ ...step, pace });
+    try {
+      if (speaking) {
+        await speak(text, stop, (f) => {
+          marked = true;
+          pace.frac = Math.max(pace.frac, f);
+        });
+      } else {
+        if (text) setCaption(text);
+        while (spent < total && !stop.aborted) await new Promise((r) => setTimeout(r, 60));
+        if (text) setCaption((c) => (c === text ? null : c));
+      }
+    } finally {
+      clearInterval(tick);
+      pace.done = true;
+    }
+    await moving;
+  };
 
   const answer = async ({ q, pointing, at }: Asked) => {
     const id = newId();
@@ -311,10 +351,14 @@ export function useTutor(host: TutorHost) {
               return patch(id, (m) => ({ ...m, saved: { ...saved } }));
             }
             did.push(line);
-            // Reading goes where the student pointed, when that is another PDF than the board.
-            if (step.op === "read" && at) {
-              if (at.board !== board && board.blank) return void (await at.board.apply({ ...step, page: at.page }));
-              if (at.board === board) return void (await board.apply({ ...step, page: at.page }));
+            if (step.op === "read") {
+              // The sentence before it is finished first; then the line is read aloud as the cursor goes along it.
+              await talking;
+              await unpaused();
+              if (stop.signal.aborted) return;
+              // Reading goes where the student pointed, when that is another PDF than the board.
+              const there = at && ((at.board !== board && board.blank) || at.board === board) ? at : null;
+              return void (await readAloud(there?.board ?? board, there ? { ...step, page: there.page } : step, stop.signal));
             }
             const added = await board.apply(step);
             if (added.length) {
