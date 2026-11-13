@@ -86,6 +86,8 @@ const del = <T>(path: string) => call<T>(path, { method: "DELETE" });
 
 export const aiApi = {
   state: () => call<AiState>("ai/settings"),
+  /** OpenRouter's free models right now, and the one we suggest. */
+  freeModels: () => call<{ models: { id: string; name: string; context: number }[]; recommended: string | null }>("ai/settings?free=1"),
   setMode: (mode: AiMode) => post<AiState>("ai/settings", { mode }),
   saveKey: (key: { apiKey: string; provider: string; model?: string; baseUrl?: string }) => post<AiState>("ai/settings", key),
   setModel: (model: string) => post<AiState>("ai/settings", { model }),

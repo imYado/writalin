@@ -74,7 +74,7 @@ export type BoardOp =
   | { op: "figure"; height: number }
   | { op: "end" }
   /** Move the cursor along a line of the page, as if reading it. Nothing is added. */
-  | { op: "read"; x: number; y: number; w: number; h: number; page?: number }
+  | { op: "read"; x: number; y: number; w: number; h: number; page?: number; /** Set by whoever reads the words aloud: how far along the line the voice is (0 to 1). The cursor keeps to it. */ pace?: { frac: number; done: boolean } }
   /** Step back, or forward again, through what was put on the pages. */
   | { op: "undo" | "redo"; steps: number }
   /** Carry on on a fresh page. */
@@ -96,6 +96,8 @@ export interface PdfBoard {
   apply(op: BoardOp): Promise<string[]>;
   /** What the student is pointing at (their cursor, finger or selection) and when they last pointed. */
   pointed(): Promise<{ at: number; page: number; label: string; text: string } | null>;
+  /** The words on a line of a page (printed, or written on it), to read aloud. */
+  lineText(box: { x: number; y: number; w: number; h: number; page?: number }): Promise<string>;
   /** Step back through what was put on the pages (by the student or the AI); says how many steps it took. */
   undo(steps?: number): number;
   /** Put back what was undone. */

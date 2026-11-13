@@ -654,7 +654,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
   useEffect(() => () => clearTimeout(handIdle.current), []);
   const band = useRef<HTMLDivElement>(null);
   /** Read a line of the page: the cursor runs along it, with a soft band growing behind it. */
-  const readLine = async (n: number, x: number, y: number, w: number, h: number) => {
+  const readLine = async (n: number, x: number, y: number, w: number, h: number, pace?: { frac: number; done: boolean }) => {
     const root = scroller.current;
     const pg = pageEl(n);
     if (!root || !pg || hurried.current) return;
@@ -674,9 +674,22 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       b.style.opacity = "1";
       void b.offsetWidth;
       b.style.transition = `width ${ms}ms linear, opacity 400ms ease`;
-      b.style.width = `${w * u}px`;
+      if (!pace) b.style.width = `${w * u}px`;
     }
-    await moveHand(n, x + w, y + h * 0.85, ms);
+    if (pace) {
+      // Read aloud: the cursor keeps to the voice, word by word, instead of running ahead of it.
+      const el = hand.current;
+      if (el) el.style.transition = "none";
+      if (b) b.style.transition = "opacity 400ms ease";
+      let at = 0;
+      while (!hurried.current && !(pace.done && at > 0.985)) {
+        const to = pace.done ? 1 : clamp(pace.frac, 0, 1);
+        at += (to - at) * (pace.done ? 0.3 : 0.14);
+        placeHand(n, x + w * at, y + h * 0.85, "move");
+        if (b) b.style.width = `${w * u * at}px`;
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+    } else await moveHand(n, x + w, y + h * 0.85, ms);
     if (b) b.style.opacity = "0";
   };
   /** Where typed text has reached, in page units: the end of what is shown so far. */
@@ -854,7 +867,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
           // About how tall it will be, to start a new page rather than run off this one.
           const rows = Math.max(1, Math.ceil((text.length * size * 0.5) / w));
           if (at.y + rows * size * 1.4 > high - BOARD_MARGIN && at.y > BOARD_MARGIN + 1) await nextPage();
-          const m: PdfMark = { ...base, page: at.page, kind: "text", size, x: BOARD_MARGIN, y: r1(at.y), w, text, note: !d.blank || undefined };
+          const m: PdfMark = { ...base, page: at.page, kind: "text", hand: true, size, x: BOARD_MARGIN, y: r1(at.y), w, text, note: !d.blank || undefined };
           await put(m);
           at.y = Math.max(at.y + size * 1.4, lowestMarkOf(m)) + size * 0.55;
           break;
@@ -862,7 +875,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         case "text": {
           const text = op.text.trim();
           if (!text) break;
-          const m: PdfMark = { ...base, kind: "text", size: BOARD_TEXT[op.size ?? "m"], x: X(op.x), y: Y(op.y), text, note: (!d.blank && !at.fig) || undefined };
+          const m: PdfMark = { ...base, kind: "text", hand: true, size: BOARD_TEXT[op.size ?? "m"], x: X(op.x), y: Y(op.y), text, note: (!d.blank && !at.fig) || undefined };
           await put(m);
           below(lowestMarkOf(m));
           break;
@@ -911,7 +924,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
         case "read": {
           const p = clamp(op.page ?? at.page, 1, d.numPages);
           const x = clamp(op.x, 0, 100);
-          await readLine(p, x, op.page ? op.y : Y(op.y), clamp(op.w, 1, 100 - x), clamp(op.h, 1, 12));
+          await readLine(p, x, op.page ? op.y : Y(op.y), clamp(op.w, 1, 100 - x), clamp(op.h, 1, 12), op.pace);
           break;
         }
         case "undo":
@@ -972,6 +985,18 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       if (marksNow.current.some((m) => gone.has(m.id))) commitMarks(marksNow.current.filter((m) => !gone.has(m.id)));
       pen.current = null;
     },
+    async lineText(box) {
+      const d = docNow.current;
+      if (!d) return "";
+      const p = clamp(box.page ?? pen.current?.page ?? page, 1, d.numPages);
+      const mid = box.y + box.h / 2;
+      // How far a line is from the box, and whether they overlap sideways at all.
+      const off = (l: { x: number; y: number; w: number; h: number }) => Math.abs(l.y + l.h / 2 - mid) + (l.x > box.x + box.w || l.x + l.w < box.x ? 50 : 0);
+      const lines = d.blank ? [] : await d.pageLines(p).catch(() => []);
+      const written = marksNow.current.filter((m): m is Extract<PdfMark, { kind: "text" }> => m.kind === "text" && m.page === p).map((m) => ({ x: m.x, y: m.y, w: m.w ?? 60, h: m.size * 1.3, text: m.text }));
+      const best = [...lines, ...written].filter((l) => l.text.trim()).sort((a, b) => off(a) - off(b))[0];
+      return best && off(best) < Math.max(3, box.h * 1.5) ? best.text.replace(/\s+/g, " ").trim().slice(0, 400) : "";
+    },
     undo(steps = 1) {
       let n = 0;
       while (n < steps && undoMark()) n++;
@@ -1009,6 +1034,7 @@ export function PdfWorkspace({ vault, path, page: initialPage, insertIntoNote, q
       describe: () => boardNow.current.describe(),
       apply: (op) => boardNow.current.apply(op),
       pointed: () => boardNow.current.pointed(),
+      lineText: (box) => boardNow.current.lineText(box),
       undo: (n) => boardNow.current.undo(n),
       redo: (n) => boardNow.current.redo(n),
       remove: (ids) => boardNow.current.remove(ids),

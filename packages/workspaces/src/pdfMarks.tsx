@@ -234,7 +234,7 @@ function MarkText({ m, unit, live, editing, selected, interactive, render, onCom
     );
   }
   const typing = live && "typed" in live;
-  const cls = `pdf-mark-text${m.note ? " pdf-mark-note" : ""}${selected ? " pdf-mark-selected" : ""}${interactive ? " pdf-mark-hit" : ""}${typing ? " pdf-mark-typing" : ""}`;
+  const cls = `pdf-mark-text${m.note ? " pdf-mark-note" : ""}${m.hand ? " pdf-mark-hand" : ""}${selected ? " pdf-mark-selected" : ""}${interactive ? " pdf-mark-hit" : ""}${typing ? " pdf-mark-typing" : ""}`;
   if (typing || html == null) return <div className={cls} style={style} data-mark-id={m.id}>{typing ? m.text.slice(0, live.typed) : m.text}</div>;
   return <div className={`${cls} card-md`} style={style} data-mark-id={m.id} dangerouslySetInnerHTML={{ __html: html }} />;
 }

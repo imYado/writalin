@@ -47,7 +47,7 @@ export type PdfMark = {
   | { kind: "line" | "arrow" | "rect" | "ellipse"; x1: number; y1: number; x2: number; y2: number }
   /** A filled box: a see-through highlight, or a white cover over printed text. */
   | { kind: "box"; x1: number; y1: number; x2: number; y2: number; fill: "highlight" | "cover" }
-  | { kind: "text"; x: number; y: number; /** Width to wrap at; unset grows with the text. */ w?: number; text: string; /** A pale note behind the text, so it reads over print. */ note?: boolean }
+  | { kind: "text"; x: number; y: number; /** Width to wrap at; unset grows with the text. */ w?: number; text: string; /** A pale note behind the text, so it reads over print. */ note?: boolean; /** Written by the tutor: shown in a handwriting font. */ hand?: boolean }
 );
 
 export type VaultEvent =

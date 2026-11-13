@@ -19,6 +19,41 @@ export const PROVIDERS = {
 
 export type ProviderId = keyof typeof PROVIDERS;
 
+/** A free OpenRouter model that teaches and draws well; offered first in Settings. */
+export const RECOMMENDED_FREE = "nvidia/nemotron-3-ultra-550b-a55b:free";
+/** OpenRouter's own router over whatever is free right now: the fallback when a free model is busy or withdrawn. */
+export const FREE_ROUTER = "openrouter/free";
+
+export interface FreeModel {
+  id: string;
+  name: string;
+  context: number;
+}
+let freeCache: { at: number; list: FreeModel[] } | null = null;
+/** OpenRouter's free text models right now (its list is public), biggest context first. Kept for an hour. */
+export async function freeModels(): Promise<FreeModel[]> {
+  if (freeCache && Date.now() - freeCache.at < 3_600_000) return freeCache.list;
+  type Row = { id?: string; name?: string; context_length?: number; pricing?: { prompt?: string; completion?: string }; architecture?: { output_modalities?: string[] } };
+  let list: FreeModel[] = [];
+  try {
+    const res = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(10_000), redirect: "error" });
+    const body = res.ok ? ((await res.json().catch(() => null)) as { data?: Row[] } | null) : null;
+    list = (body?.data ?? [])
+      .filter((m) => String(m.id ?? "").endsWith(":free") && Number(m.pricing?.prompt ?? 1) === 0 && Number(m.pricing?.completion ?? 1) === 0 && (m.architecture?.output_modalities ?? ["text"]).includes("text"))
+      // Tiny models, rerankers and safety classifiers can't teach.
+      .filter((m) => Number(m.context_length ?? 0) >= 32_000 && !/rerank|safety|guard|embed/i.test(String(m.id)))
+      .map((m) => ({ id: String(m.id), name: String(m.name ?? m.id).replace(/\s*\(free\)\s*$/i, ""), context: Number(m.context_length ?? 0) }))
+      .sort((a, b) => b.context - a.context)
+      .slice(0, 40);
+  } catch {
+    /* the fixed list below */
+  }
+  if (!list.length) return [{ id: RECOMMENDED_FREE, name: "Nemotron 3 Ultra", context: 1_000_000 }, { id: FREE_ROUTER, name: "Any free model (OpenRouter picks)", context: 0 }];
+  if (!list.some((m) => m.id === FREE_ROUTER)) list.push({ id: FREE_ROUTER, name: "Any free model (OpenRouter picks)", context: 0 });
+  freeCache = { at: Date.now(), list };
+  return list;
+}
+
 export function isProvider(id: unknown): id is ProviderId {
   return typeof id === "string" && Object.hasOwn(PROVIDERS, id);
 }
@@ -78,6 +113,11 @@ export async function listModels(t: Omit<ChatTarget, "model">): Promise<string[]
   return ids?.length ? ids : null;
 }
 
+/** Whether a failed request to a free OpenRouter model should be tried again through its free router. */
+export function freeFallback(baseUrl: string, model: string, status: number): boolean {
+  return /\/\/openrouter\.ai\//.test(`${baseUrl}/`) && model.endsWith(":free") && (status === 404 || status === 429 || status >= 500);
+}
+
 /** The longest answer a request may ask for. */
 const MAX_TOKENS = 4000;
 
@@ -105,12 +145,13 @@ export interface ChatMessage {
  * piece is passed on as it comes.
  */
 export async function chat(t: ChatTarget, system: string, user: string | ChatMessage[], mode: "own" | "builtin", onDelta?: (text: string) => void, signal?: AbortSignal): Promise<{ text: string; model: string }> {
+  let model = t.model;
   const ask = async (maxTokens: number): Promise<Response> => {
     try {
       return await fetch(`${t.baseUrl}/chat/completions`, {
         method: "POST",
         headers: { authorization: `Bearer ${t.apiKey}`, "content-type": "application/json" },
-        body: JSON.stringify({ model: t.model, max_tokens: maxTokens, stream: !!onDelta, messages: [{ role: "system", content: system }, ...(typeof user === "string" ? [{ role: "user", content: user }] : user)] }),
+        body: JSON.stringify({ model, max_tokens: maxTokens, stream: !!onDelta, messages: [{ role: "system", content: system }, ...(typeof user === "string" ? [{ role: "user", content: user }] : user)] }),
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(110_000)]) : AbortSignal.timeout(110_000),
         redirect: "error",
       });
@@ -119,6 +160,11 @@ export async function chat(t: ChatTarget, system: string, user: string | ChatMes
     }
   };
   let res = await ask(MAX_TOKENS);
+  // A free OpenRouter model that is busy, withdrawn or having trouble: let OpenRouter pick another free one, once.
+  if (freeFallback(t.baseUrl, model, res.status)) {
+    model = FREE_ROUTER;
+    res = await ask(MAX_TOKENS);
+  }
   if (res.status === 402) {
     // Low on credits: the service says how long an answer the balance still covers, so ask for that much.
     const detail = (await res.text().catch(() => "")).slice(0, 2000);
@@ -131,7 +177,7 @@ export async function chat(t: ChatTarget, system: string, user: string | ChatMes
     throw new HttpError(400, `${t.label} rejected your API key. Update it in Settings.`, mode === "own" ? "ai_bad_key" : undefined);
   }
   if (res.status === 404) throw new HttpError(400, `${t.label} doesn't know the model “${t.model}”. Pick another model in Settings.`, "ai_bad_model");
-  if (res.status === 429) throw new HttpError(429, `${t.label} says you've hit a rate or credit limit. Wait a minute, or check your account there.`);
+  if (res.status === 429) throw new HttpError(429, model.endsWith(":free") || model === FREE_ROUTER ? `${t.label}'s free models are busy, or you've used today's free requests (50 a day; 1,000 once the account has ever bought $10 of credits). Try again in a minute.` : `${t.label} says you've hit a rate or credit limit. Wait a minute, or check your account there.`);
   if (!res.ok) {
     console.error(`${t.label} error`, res.status, (await res.text().catch(() => "")).slice(0, 500));
     throw new HttpError(502, `${t.label} is having trouble right now. Try again in a moment.`);

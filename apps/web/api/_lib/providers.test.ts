@@ -49,6 +49,19 @@ describe("AI providers", () => {
     await expect(chat(target, "s", "u", "own")).rejects.toThrow(/out of credits/);
   });
 
+  it("falls back to another free model when a free OpenRouter model is busy or gone", async () => {
+    const or = { ...target, baseUrl: "https://openrouter.ai/api/v1", model: "vendor/some-model:free" };
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => (JSON.parse(init.body as string).model === "openrouter/free" ? Response.json({ choices: [{ message: { content: "From another free model" } }] }) : new Response("busy", { status: 429 })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(chat(or, "s", "u", "own")).resolves.toMatchObject({ text: "From another free model" });
+    expect(fetchMock.mock.calls.map((c) => JSON.parse(c[1].body as string).model)).toEqual(["vendor/some-model:free", "openrouter/free"]);
+    // A paid model, or another service, is not rerouted.
+    const paid = vi.fn(async () => new Response("busy", { status: 429 }));
+    vi.stubGlobal("fetch", paid);
+    await expect(chat({ ...or, model: "vendor/paid" }, "s", "u", "own")).rejects.toThrow(/limit/);
+    expect(paid).toHaveBeenCalledTimes(1);
+  });
+
   it("lists models, without the Gemini models/ prefix", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [{ id: "models/gemini-2.5-flash" }, { id: "x" }] })));
     await expect(listModels(target)).resolves.toEqual(["gemini-2.5-flash", "x"]);

@@ -4,6 +4,8 @@ import { registerSW } from "virtual:pwa-register";
 import "@writalin/ui/styles.css";
 import "@writalin/editor/editor.css";
 import "@writalin/workspaces/styles.css";
+import "@fontsource/patrick-hand/latin.css";
+import "@fontsource/patrick-hand/latin-ext.css";
 import "./app.css";
 import { App } from "./App";
 import { installGlow } from "@writalin/ui";

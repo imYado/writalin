@@ -222,6 +222,7 @@ function AiSection({ account, enabled, onEnabled }: { vault: Vault; account: Acc
   // Groq is free to start with, so it's the suggestion until a key says otherwise.
   const [provider, setProvider] = useState("groq");
   const [model, setModel] = useState("");
+  const [free, setFree] = useState<{ models: { id: string; name: string; context: number }[]; recommended: string | null } | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -231,6 +232,10 @@ function AiSection({ account, enabled, onEnabled }: { vault: Vault; account: Acc
   }, [account, enabled]);
   const info = state?.providers.find((p) => p.id === provider);
   const savedLabel = state?.providers.find((p) => p.id === state.provider)?.label ?? "Your";
+  // OpenRouter's free models, fetched when that service is picked.
+  useEffect(() => {
+    if (provider === "openrouter" && account && !free) aiApi.freeModels().then(setFree).catch(() => {});
+  }, [provider, account, free]);
   /** Same service as the saved key: the model can change without entering the key again. */
   const sameService = Boolean(state?.hasOwnKey && state.provider === provider && provider !== "custom");
   const detected = key.trim() ? detectProvider(key) : null;
@@ -353,6 +358,23 @@ function AiSection({ account, enabled, onEnabled }: { vault: Vault; account: Acc
                 <input value={model} placeholder={info?.defaultModel || "Model name"} spellCheck={false} autoComplete="off" onChange={(e) => setModel(e.target.value)} />
               </label>
             </div>
+            {provider === "openrouter" && free && (
+              <div className="w-field ai-free">
+                <span>Free models</span>
+                <div className="w-row">
+                  <select value={free.models.some((m) => m.id === model) ? model : ""} onChange={(e) => e.target.value && setModel(e.target.value)} aria-label="Free OpenRouter models">
+                    <option value="">Pick a free model…</option>
+                    {free.models.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}{m.id === free.recommended ? " (recommended)" : ""}</option>
+                    ))}
+                  </select>
+                  {free.recommended && model !== free.recommended && (
+                    <button type="button" className="w-btn w-btn-small" onClick={() => setModel(free.recommended!)}>Use the recommended one</button>
+                  )}
+                </div>
+                <span className="w-muted w-small">Free models cost nothing, but OpenRouter allows 50 requests a day (1,000 once your account has ever bought $10 of credits). If the one you pick is busy or withdrawn, another free model answers instead. Press “Save model” after picking.</span>
+              </div>
+            )}
             {provider === "custom" && (
               <label className="w-field">
                 <span>API address</span>
