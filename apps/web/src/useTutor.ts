@@ -281,7 +281,11 @@ export function useTutor(host: TutorHost) {
     await moving;
   };
 
+  /** Set when the student interrupts: the reply under way is cut off there. */
+  const cutNow = useRef(false);
+  const resumeNow = useRef(() => {});
   const answer = async ({ q, pointing, at }: Asked) => {
+    cutNow.current = false;
     const id = newId();
     setLog((l) => [...l, { id, from: "tutor", text: "", working: true }]);
     const stop = new AbortController();
@@ -319,10 +323,6 @@ export function useTutor(host: TutorHost) {
               await unpaused();
               if (stop.signal.aborted) return;
               // A new `say` starts a new point. If the student said something meanwhile, stop here and hear them.
-              if (points > 0 && queue.current.length) {
-                cut = true;
-                return stop.abort();
-              }
               points++;
               did.push(line);
               patch(id, (m) => ({ ...m, text: m.text ? `${m.text}\n${step.say}` : step.say }));
@@ -383,6 +383,7 @@ export function useTutor(host: TutorHost) {
       patch(id, (m) => ({ ...m, working: false, text: m.text || (ids.length ? "It's on the board." : m.saved || m.quiz ? "Done." : "I have nothing to add.") }));
     } catch (e) {
       const stopped = stop.signal.aborted;
+      cut = cutNow.current;
       // Stopped part-way: what's already on the board stays, and the tutor remembers what it got through.
       if (stopped && did.length) history.current.push({ role: "user", content: q }, { role: "assistant", content: did.join("\n").slice(0, 5000) });
       const message = stopped ? "" : e instanceof ApiError ? e.message : "Something went wrong. Try again.";
@@ -401,7 +402,16 @@ export function useTutor(host: TutorHost) {
     // What they are pointing at is taken now, not when a waiting question is finally read.
     const entry: Asked = { id: mine, q };
     const waiting = busyNow.current;
-    if (waiting) queue.current.push(entry);
+    if (waiting) {
+      queue.current.push(entry);
+      // Interrupting: the tutor stops at once (what it is drawing is finished off) and this is answered next.
+      cutNow.current = true;
+      stopRef.current?.abort();
+      synth()?.cancel();
+      setCaption(null);
+      resumeNow.current();
+      for (const w of work.current.values()) w.board.hurry();
+    }
     const point = await hostNow.current.pointing().catch(() => null);
     if (point) {
       entry.pointing = point.text;
@@ -435,6 +445,8 @@ export function useTutor(host: TutorHost) {
     synth()?.resume();
     for (const r of resumers.current.splice(0)) r();
   }, []);
+
+  resumeNow.current = resume;
 
   /** Hold the lesson where it is: the voice stops mid-sentence and nothing more is drawn until it is resumed. */
   const pause = useCallback(() => {
